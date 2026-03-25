@@ -53,8 +53,7 @@ X_train, X_test, y_train, y_test = train_test_split(
 issue_model = LogisticRegression(max_iter=300)
 issue_model.fit(X_train, y_train)
 
-y_pred = issue_model.predict(X_test)
-nlp_accuracy = accuracy_score(y_test, y_pred)
+nlp_accuracy = accuracy_score(y_test, issue_model.predict(X_test))
 
 # -------------------------------
 # DSAT MODEL
@@ -74,27 +73,21 @@ weekly_df = weekly_df.dropna()
 
 features = [f'DSAT_lag_{i}' for i in range(1,5)] + [f'Tickets_lag_{i}' for i in range(1,5)]
 
-X = weekly_df[features]
-y = weekly_df['DSAT_Count']
-
 model = RandomForestRegressor()
-model.fit(X,y)
+model.fit(weekly_df[features], weekly_df['DSAT_Count'])
 
 # -------------------------------
-# 📊 MODEL ACCURACY
+# 📊 MODEL ACCURACY (TOP)
 # -------------------------------
 st.subheader("📊 Model Accuracy")
 
-sample_agent = weekly_df['Agent_Name'].iloc[0]
-sample_data = weekly_df[weekly_df['Agent_Name']==sample_agent]
-
-agent_actual = sample_data['DSAT_Count']
-agent_pred = model.predict(sample_data[features])
-
-mae = mean_absolute_error(agent_actual, agent_pred)
-r2 = r2_score(agent_actual, agent_pred)
+sample = weekly_df.sample(min(100, len(weekly_df)))
+mae = mean_absolute_error(sample['DSAT_Count'], model.predict(sample[features]))
+r2 = r2_score(sample['DSAT_Count'], model.predict(sample[features]))
 
 c1, c2, c3 = st.columns(3)
+
+# 🔥 FIXED ORDER
 c1.metric("Issue Detection Accuracy", f"{round(nlp_accuracy*100,1)}%")
 c2.metric("Prediction Reliability (R²)", round(r2,2))
 c3.metric("Avg Prediction Error", round(mae,2))
@@ -105,20 +98,23 @@ c3.metric("Avg Prediction Error", round(mae,2))
 st.subheader("🚨 Risk Segmentation")
 
 agent_summary = weekly_df.groupby('Agent_Name')['DSAT_Count'].mean().reset_index()
-agent_summary['Risk'] = (agent_summary['DSAT_Count'] - y.mean())/y.std()*10 + 50
+mean = weekly_df['DSAT_Count'].mean()
+std = weekly_df['DSAT_Count'].std()
+
+agent_summary['Risk'] = (agent_summary['DSAT_Count'] - mean)/std*10 + 50
 
 col1, col2 = st.columns(2)
 
 with col1:
     st.error("High Risk Agents")
-    st.dataframe(agent_summary[agent_summary['Risk'] > 60].head(5))
+    st.dataframe(agent_summary[agent_summary['Risk'] > 60])
 
 with col2:
     st.success("Low Risk Agents")
-    st.dataframe(agent_summary[agent_summary['Risk'] < 45].head(5))
+    st.dataframe(agent_summary[agent_summary['Risk'] < 45])
 
 # -------------------------------
-# 🔽 AGENT SELECT
+# 👤 AGENT SELECT (CORRECT POSITION)
 # -------------------------------
 agent = st.selectbox("Select Agent", weekly_df['Agent_Name'].unique())
 
@@ -126,7 +122,7 @@ agent_data = weekly_df[weekly_df['Agent_Name']==agent].sort_values('Week')
 latest = agent_data.iloc[-1]
 
 # -------------------------------
-# 📈 WEEKLY DSAT TREND
+# 📈 WEEKLY TREND
 # -------------------------------
 st.subheader("📈 Weekly DSAT Trend")
 st.line_chart(agent_data.set_index('Week')['DSAT_Count'])
@@ -135,7 +131,7 @@ st.line_chart(agent_data.set_index('Week')['DSAT_Count'])
 # 🎯 PREDICTION
 # -------------------------------
 prediction = model.predict([latest[features]])[0]
-risk = (prediction - y.mean())/y.std()*10 + 50
+risk = (prediction - mean)/std*10 + 50
 
 st.subheader("🎯 Case Handling & Prediction")
 
@@ -148,8 +144,9 @@ col5.metric("Risk Score", int(risk))
 # -------------------------------
 agent_comments = df[df['Agent_Name']==agent]
 
-X_agent = vectorizer.transform(agent_comments['Customer_Comment'])
-pred_issues = issue_model.predict(X_agent)
+pred_issues = issue_model.predict(
+    vectorizer.transform(agent_comments['Customer_Comment'])
+)
 
 issue_df = pd.DataFrame(pred_issues, columns=["Issue"])
 issue_df = issue_df.value_counts().reset_index(name="Count")
@@ -159,7 +156,7 @@ st.dataframe(issue_df)
 st.bar_chart(issue_df.set_index("Issue")["Count"])
 
 # -------------------------------
-# 🤖 AI INSIGHT (FINAL)
+# 🤖 AI INSIGHT + ROOT + ACTION
 # -------------------------------
 st.subheader("🤖 AI Insight")
 
@@ -170,46 +167,31 @@ if risk < 45:
     st.markdown(f"""
 ### ✅ Performance Summary
 
-Agent **{agent}** is performing strongly with low DSAT risk.
+Agent **{agent}** is performing strongly.
 
 - Predicted DSAT: **{int(prediction)}**
 - Risk Score: **{int(risk)}**
 
-The agent is consistently delivering a stable and positive customer experience.
 """)
 
     st.markdown("""
 ### 💡 Strengths
-- Consistent handling quality  
-- Low dissatisfaction trend  
-- Good customer engagement  
-
-👉 Continue current approach to maintain performance.
+- Strong communication
+- Stable performance
+- Low customer dissatisfaction
 """)
 
 else:
 
     if top_issue == "Communication":
-        root = "Customer dissatisfaction is primarily driven by communication gaps during interactions."
-        actions = """
-- Improve empathy and tone in conversations  
-- Avoid scripted or robotic responses  
-- Focus on active listening and clarity  
-"""
+        root = "Poor communication quality"
+        action = "- Improve empathy\n- Avoid scripted replies\n- Listen actively"
     elif top_issue == "Process":
-        root = "Customer dissatisfaction is driven by delays and inefficient handling processes."
-        actions = """
-- Reduce wait time and unnecessary transfers  
-- Provide clear timelines to customers  
-- Take full ownership of issues  
-"""
+        root = "Delays and inefficiencies"
+        action = "- Reduce wait time\n- Avoid transfers\n- Take ownership"
     else:
-        root = "Customer dissatisfaction is driven by product-related issues and resolution gaps."
-        actions = """
-- Strengthen product knowledge  
-- Escalate recurring issues faster  
-- Ensure accurate and complete resolutions  
-"""
+        root = "Product issues"
+        action = "- Improve product knowledge\n- Escalate faster"
 
     st.markdown(f"""
 ### ⚠️ Performance Needs Attention
@@ -217,15 +199,9 @@ else:
 - Predicted DSAT: **{int(prediction)}**
 - Risk Score: **{int(risk)}**
 
-The agent is currently experiencing an increase in customer dissatisfaction signals.
-""")
-
-    st.markdown(f"""
 ### 🔍 Root Cause
 {root}
-""")
 
-    st.markdown(f"""
 ### 💡 Actions
-{actions}
+{action}
 """)
