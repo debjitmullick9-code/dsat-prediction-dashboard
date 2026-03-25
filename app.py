@@ -7,7 +7,7 @@ from sklearn.linear_model import LogisticRegression
 from sklearn.feature_extraction.text import TfidfVectorizer
 
 from sklearn.model_selection import train_test_split
-from sklearn.metrics import accuracy_score, classification_report
+from sklearn.metrics import accuracy_score
 from sklearn.metrics import mean_absolute_error, r2_score
 
 from textblob import TextBlob
@@ -16,7 +16,7 @@ from textblob import TextBlob
 # PAGE CONFIG
 # -------------------------------
 st.set_page_config(page_title="DSAT Intelligence", layout="wide")
-st.title("🚀 DSAT Intelligence Dashboard (ML Powered)")
+st.title("🚀 DSAT Intelligence Dashboard")
 
 # -------------------------------
 # LOAD DATA
@@ -28,14 +28,14 @@ df['DSAT'] = df['Customer_Effortless'].apply(lambda x: 1 if x == "No" else 0)
 df['Sentiment'] = df['Customer_Comment'].apply(lambda x: TextBlob(str(x)).sentiment.polarity)
 
 # -------------------------------
-# AUTO LABEL FOR NLP MODEL
+# AUTO LABEL FOR NLP
 # -------------------------------
 def label_issue(comment):
     c = str(comment).lower()
     if any(w in c for w in ["rude","unhelpful","confusing","agent"]):
         return "Communication"
     elif any(w in c for w in ["delay","long","wait","slow","time"]):
-        return "Delay"
+        return "Process"
     elif any(w in c for w in ["not working","bug","broken","glitch"]):
         return "Product"
     else:
@@ -63,7 +63,6 @@ issue_model = LogisticRegression(max_iter=200)
 issue_model.fit(X_train, y_train)
 
 y_pred = issue_model.predict(X_test)
-
 nlp_accuracy = accuracy_score(y_test, y_pred)
 
 # -------------------------------
@@ -78,6 +77,7 @@ df["Team"] = np.random.choice(teams, len(df))
 st.sidebar.header("🎛 Filters")
 
 team = st.sidebar.selectbox("Team", ["All"] + teams)
+
 date_range = st.sidebar.date_input(
     "Date Range",
     [df['Week'].min(), df['Week'].max()]
@@ -103,7 +103,7 @@ weekly_df.rename(columns={
 }, inplace=True)
 
 # -------------------------------
-# FEATURE ENGINEERING
+# FEATURES
 # -------------------------------
 for i in range(1, 5):
     weekly_df[f'DSAT_lag_{i}'] = weekly_df.groupby('Agent_Name')['DSAT_Count'].shift(i)
@@ -128,13 +128,15 @@ mae = mean_absolute_error(y, preds)
 r2 = r2_score(y, preds)
 
 # -------------------------------
-# MODEL PERFORMANCE
+# SYSTEM ACCURACY (BUSINESS VIEW)
 # -------------------------------
-st.subheader("📊 Model Performance")
+st.subheader("📊 System Accuracy Overview")
 
-st.write(f"NLP Accuracy: {round(nlp_accuracy,2)}")
-st.write(f"DSAT Model R2 Score: {round(r2,2)}")
-st.write(f"DSAT MAE: {round(mae,2)}")
+colA, colB, colC = st.columns(3)
+
+colA.metric("Issue Detection Accuracy", f"{round(nlp_accuracy*100,1)}%")
+colB.metric("Prediction Reliability (R²)", round(r2,2))
+colC.metric("Avg Prediction Error (DSAT)", round(mae,2))
 
 # -------------------------------
 # LEADERBOARD
@@ -151,7 +153,7 @@ st.subheader("🟢 Low Risk Agents")
 st.dataframe(agent_summary.sort_values("Risk").head(10))
 
 # -------------------------------
-# AGENT SELECTION
+# AGENT SELECT
 # -------------------------------
 agent = st.selectbox("Select Agent", weekly_df['Agent_Name'].unique())
 
@@ -166,18 +168,19 @@ risk = (prediction - y.mean()) / y.std() * 10 + 50
 # -------------------------------
 col1, col2 = st.columns(2)
 
-col1.metric("Predicted DSAT", int(prediction))
-col2.metric("Risk Score", int(risk))
+col1.metric("📉 Predicted DSAT", int(prediction))
+col2.metric("⚠️ Risk Score", int(risk))
 
 # -------------------------------
 # TREND
 # -------------------------------
+st.subheader("📈 DSAT Trend")
 st.line_chart(agent_data.set_index('Week')['DSAT_Count'])
 
 # -------------------------------
 # SIMULATION
 # -------------------------------
-st.subheader("🔮 Simulation")
+st.subheader("🔮 Real-Time Simulation")
 
 sim_dsat = st.slider("Last Week DSAT", 0, 20, int(latest['DSAT_lag_1']))
 sim_tickets = st.slider("Last Week Tickets", 10, 150, int(latest['Tickets_lag_1']))
@@ -188,10 +191,10 @@ sim_input.iloc[4] = sim_tickets
 
 sim_pred = model.predict([sim_input])[0]
 
-st.metric("Simulated DSAT", int(sim_pred))
+st.metric("Simulated DSAT Prediction", int(sim_pred))
 
 # -------------------------------
-# CX ANALYSIS (ML BASED)
+# CX ANALYSIS (ML)
 # -------------------------------
 agent_comments = df[df['Agent_Name'] == agent]
 dsat_comments = agent_comments[agent_comments['DSAT'] == 1]['Customer_Comment']
@@ -205,12 +208,12 @@ issue_df = issue_df.value_counts().reset_index(name="Count")
 total = issue_df["Count"].sum()
 issue_df["Percentage"] = (issue_df["Count"]/total*100).round(1)
 
-st.subheader("📊 Issue Breakdown (ML)")
+st.subheader("📊 Issue Breakdown")
 st.dataframe(issue_df)
 st.bar_chart(issue_df.set_index("Issue")["Count"])
 
 # -------------------------------
-# SMART INSIGHT
+# SMART AI INSIGHT
 # -------------------------------
 def generate_insight(agent, pred, risk, sentiment, issue_df, trend):
 
@@ -230,25 +233,43 @@ def generate_insight(agent, pred, risk, sentiment, issue_df, trend):
     else:
         level = "critical"
 
+    if top_issue == "Communication":
+        action = """
+- Use clear and simple communication  
+- Show empathy towards customer issues  
+- Avoid repetitive scripted responses  
+"""
+    elif top_issue == "Process":
+        action = """
+- Reduce response and handling time  
+- Avoid long wait times  
+- Provide faster resolution updates  
+"""
+    else:
+        action = """
+- Improve product knowledge  
+- Escalate recurring issues  
+- Provide accurate troubleshooting  
+"""
+
     return f"""
 ### 🤖 AI Insight
 
 Agent **{agent}** performance is **{level}**.
 
+### 📊 Performance Summary:
 - DSAT trend is **{trend_msg}**
 - Predicted DSAT: **{int(pred)}**
 - Risk Score: **{int(risk)}**
 
 ### 🔍 Root Cause:
-Primary issue: **{top_issue}**
+Primary issue identified is **{top_issue}**
 
-### 💡 Recommendation:
-- Improve **{top_issue}**
-- Monitor DSAT trend closely
-- Reduce repeated complaints
+### 💡 Recommended Actions:
+{action}
 
-### 🎯 Impact:
-Fixing this can significantly reduce DSAT.
+### 🎯 Expected Impact:
+Improving this area will reduce repeat complaints and improve customer satisfaction.
 """
 
 trend = latest['DSAT_lag_1'] - latest['DSAT_lag_4']
