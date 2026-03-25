@@ -75,13 +75,12 @@ def label_issue(comment):
 df['Issue_Label'] = df['Customer_Comment'].apply(label_issue)
 
 # -------------------------------
-# NLP MODEL (REALISTIC)
+# NLP MODEL
 # -------------------------------
 df_clean = df[df['Issue_Label'] != "Other"].copy()
 
 if len(df_clean) > 50:
 
-    # Add noise
     noise_ratio = 0.2
     noise_idx = np.random.choice(df_clean.index, int(len(df_clean)*noise_ratio), replace=False)
     df_clean.loc[noise_idx, 'Issue_Label'] = np.random.choice(
@@ -207,70 +206,92 @@ st.dataframe(issue_df)
 st.bar_chart(issue_df.set_index("Issue")["Count"])
 
 # -------------------------------
-# 🤖 SMART AI INSIGHT (NO API)
+# 🔥 PREMIUM AI INSIGHT ENGINE
 # -------------------------------
 def generate_ai_insight(agent, pred, risk, issue_df, sentiment, trend):
 
     top_issue = issue_df.sort_values("Count", ascending=False).iloc[0]["Issue"]
+    total_issues = issue_df["Count"].sum()
 
     if risk < 45:
-        level = "Excellent"
-        tone = "Agent is performing very well."
+        level = "Strong Performer"
+        summary = f"{agent} is consistently delivering a strong customer experience."
     elif risk < 60:
-        level = "Moderate"
-        tone = "Performance needs monitoring."
+        level = "Watchlist"
+        summary = f"{agent} shows early signs of performance inconsistency."
     else:
-        level = "High Risk"
-        tone = "Immediate improvement required."
+        level = "Critical"
+        summary = f"{agent} is at high risk with repeated customer dissatisfaction."
 
     if trend > 0:
-        trend_msg = "DSAT is increasing."
+        trend_msg = "DSAT is rising week-over-week, indicating performance decline."
     elif trend < 0:
-        trend_msg = "DSAT is improving."
+        trend_msg = "DSAT is improving, showing recovery."
     else:
         trend_msg = "DSAT is stable."
 
     if sentiment > 0:
-        sentiment_msg = "Customer sentiment is positive."
+        sentiment_msg = "Customer tone is mostly positive."
     else:
-        sentiment_msg = "Customer sentiment is negative."
+        sentiment_msg = "Customer tone is negative, indicating repeated issues."
 
     if top_issue == "Communication":
-        action = "- Improve clarity and empathy\n- Avoid scripted responses"
+        coaching = """
+- Improve active listening and avoid interrupting customers  
+- Replace scripted replies with personalized responses  
+- Use empathy statements during difficult interactions  
+"""
+        impact = "Communication gaps are affecting customer trust."
+
     elif top_issue == "Process":
-        action = "- Reduce wait time\n- Improve resolution speed"
+        coaching = """
+- Reduce wait time and avoid unnecessary transfers  
+- Provide clear timelines for resolution  
+- Take full ownership of customer issues  
+"""
+        impact = "Process inefficiencies are driving customer frustration."
+
     else:
-        action = "- Improve product knowledge\n- Escalate recurring issues"
+        coaching = """
+- Strengthen product knowledge  
+- Escalate recurring technical issues early  
+- Ensure accurate troubleshooting  
+"""
+        impact = "Product-related issues are leading to unresolved tickets."
 
     return f"""
-### 🤖 AI Insight
+### 🤖 AI Performance Insight
 
 **Agent:** {agent}  
-**Performance:** {level}
+**Performance Level:** {level}
 
-### 📊 Summary
-- Predicted DSAT: {int(pred)}
-- Risk Score: {int(risk)}
+---
+
+### 📊 Performance Summary
+- Predicted DSAT: **{int(pred)}**
+- Risk Score: **{int(risk)}**
 - {trend_msg}
 - {sentiment_msg}
 
-### 🔍 Key Issue
-{top_issue}
+---
 
-### 💡 Recommendations
-{action}
+### 🔍 Key Driver
+**{top_issue} ({total_issues} cases)**  
+👉 {impact}
+
+---
+
+### 💡 Coaching Recommendations
+{coaching}
+
+---
+
+### 🎯 Manager Note
+Focus on this area in the next QA review cycle to reduce DSAT and improve consistency.
 """
 
 trend = latest['DSAT_lag_1'] - latest['DSAT_lag_4']
 sentiment = agent_comments['Sentiment'].mean()
 
 st.subheader("🤖 AI Insight")
-
-st.markdown(generate_ai_insight(
-    agent,
-    prediction,
-    risk,
-    issue_df,
-    sentiment,
-    trend
-))
+st.markdown(generate_ai_insight(agent, prediction, risk, issue_df, sentiment, trend))
