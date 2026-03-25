@@ -19,16 +19,11 @@ st.set_page_config(page_title="DSAT Intelligence", layout="wide")
 st.title("🚀 DSAT Intelligence Dashboard")
 
 # -------------------------------
-# SAFE CSV LOADER
+# LOAD DATA
 # -------------------------------
 file_path = "bpo_customer_experience_dataset.csv"
 
-if not os.path.exists(file_path):
-    st.error("❌ CSV file not found")
-    st.stop()
-
 df = None
-
 for encoding in ["utf-8", "latin1", "utf-16"]:
     for sep in [",", "|", ";", "\t"]:
         try:
@@ -46,7 +41,6 @@ if df is None or df.empty:
     st.stop()
 
 df.columns = df.columns.str.strip()
-st.success(f"✅ Loaded {df.shape[0]} rows")
 
 # -------------------------------
 # CLEANING
@@ -58,11 +52,10 @@ df['DSAT'] = df['Customer_Effortless'].apply(lambda x: 1 if str(x).lower() == "n
 df['Sentiment'] = df['Customer_Comment'].apply(lambda x: TextBlob(str(x)).sentiment.polarity)
 
 # -------------------------------
-# LABEL FUNCTION
+# ISSUE LABEL
 # -------------------------------
 def label_issue(comment):
     c = str(comment).lower()
-
     if any(w in c for w in ["rude","bad","angry","unhelpful"]):
         return "Communication"
     elif any(w in c for w in ["delay","wait","slow","long"]):
@@ -79,37 +72,25 @@ df['Issue_Label'] = df['Customer_Comment'].apply(label_issue)
 # -------------------------------
 df_clean = df[df['Issue_Label'] != "Other"].copy()
 
+vectorizer = None
+issue_model = None
+nlp_accuracy = 0
+
 if len(df_clean) > 50:
-
-    noise_ratio = 0.2
-    noise_idx = np.random.choice(df_clean.index, int(len(df_clean)*noise_ratio), replace=False)
-    df_clean.loc[noise_idx, 'Issue_Label'] = np.random.choice(
-        ["Communication","Process","Product"], len(noise_idx)
-    )
-
-    train_df, test_df = train_test_split(
-        df_clean,
-        test_size=0.3,
-        stratify=df_clean['Issue_Label'],
-        random_state=42
-    )
+    train_df, test_df = train_test_split(df_clean, test_size=0.3, stratify=df_clean['Issue_Label'])
 
     vectorizer = TfidfVectorizer(stop_words='english', max_features=2000)
-
     X_train = vectorizer.fit_transform(train_df['Customer_Comment'])
     y_train = train_df['Issue_Label']
 
     X_test = vectorizer.transform(test_df['Customer_Comment'])
     y_test = test_df['Issue_Label']
 
-    issue_model = LogisticRegression(max_iter=200, C=0.5)
+    issue_model = LogisticRegression(max_iter=200)
     issue_model.fit(X_train, y_train)
 
     y_pred = issue_model.predict(X_test)
     nlp_accuracy = accuracy_score(y_test, y_pred)
-
-else:
-    nlp_accuracy = 0.0
 
 # -------------------------------
 # DSAT MODEL
@@ -136,7 +117,7 @@ model = RandomForestRegressor()
 model.fit(X,y)
 
 # -------------------------------
-# SELECT AGENT
+# AGENT SELECT
 # -------------------------------
 agent = st.selectbox("Select Agent", weekly_df['Agent_Name'].unique())
 
@@ -147,32 +128,38 @@ prediction = model.predict([latest[features]])[0]
 risk = (prediction - y.mean())/y.std()*10 + 50
 
 # -------------------------------
-# AGENT METRICS (FIXED)
+# METRICS
 # -------------------------------
-agent_actual = agent_data['DSAT_Count'].values
+agent_actual = agent_data['DSAT_Count']
 agent_pred = model.predict(agent_data[features])
 
-agent_mae = mean_absolute_error(agent_actual, agent_pred)
+mae = mean_absolute_error(agent_actual, agent_pred)
 
-agent_variance = np.var(agent_actual)
-agent_error_var = np.var(agent_actual - agent_pred)
-
-agent_r2 = 1 - (agent_error_var / agent_variance) if agent_variance != 0 else 0
-
-st.subheader("📊 System Accuracy Overview")
-
-c1,c2,c3 = st.columns(3)
-c1.metric("Issue Detection Accuracy", f"{round(nlp_accuracy*100,1)}%")
-c2.metric("Prediction Reliability", round(agent_r2,2))
-c3.metric("Avg Prediction Error", round(agent_mae,2))
-
-# -------------------------------
-# KPI
-# -------------------------------
+st.subheader("📊 Performance Metrics")
 st.metric("Predicted DSAT", int(prediction))
 st.metric("Risk Score", int(risk))
+st.metric("Avg Prediction Error", round(mae,2))
 
-st.line_chart(agent_data.set_index('Week')['DSAT_Count'])
+# -------------------------------
+# 🚨 RISK SEGMENT (RESTORED)
+# -------------------------------
+st.subheader("🚨 Risk Segmentation")
+
+agent_summary = weekly_df.groupby('Agent_Name')['DSAT_Count'].mean().reset_index()
+agent_summary['Risk'] = (agent_summary['DSAT_Count'] - y.mean())/y.std()*10 + 50
+
+high_risk = agent_summary[agent_summary['Risk'] > 60]
+low_risk = agent_summary[agent_summary['Risk'] < 45]
+
+col1, col2 = st.columns(2)
+
+with col1:
+    st.error("High Risk Agents")
+    st.dataframe(high_risk.head(5))
+
+with col2:
+    st.success("Low Risk Agents")
+    st.dataframe(low_risk.head(5))
 
 # -------------------------------
 # ISSUE BREAKDOWN
@@ -182,7 +169,7 @@ dsat_comments = agent_comments[agent_comments['DSAT']==1]['Customer_Comment']
 
 issues = ["Communication","Process","Product"]
 
-if len(dsat_comments) > 0:
+if len(dsat_comments) > 0 and issue_model:
     X_test_agent = vectorizer.transform(dsat_comments)
     pred_issues = issue_model.predict(X_test_agent)
 
@@ -197,75 +184,68 @@ else:
 
 st.subheader("📊 Issue Breakdown")
 st.dataframe(issue_df)
-st.bar_chart(issue_df.set_index("Issue")["Count"])
 
 # -------------------------------
-# 🔥 FINAL AI INSIGHT (FIXED)
+# 🔥 FINAL AI INSIGHT (LOGIC FIXED)
 # -------------------------------
-def generate_ai_insight(agent, pred, risk, issue_df, trend, dsat_ratio):
+def generate_ai_insight(agent, pred, risk, issue_df, trend):
 
     top_issue = issue_df.sort_values("Count", ascending=False).iloc[0]["Issue"]
 
     if risk < 45:
-        level = "Strong Performer"
-    elif risk < 60:
-        level = "Watchlist"
-    else:
-        level = "Critical"
+        return f"""
+### 🤖 AI Insight
 
-    # TREND
-    if trend > 0:
-        trend_msg = "DSAT is rising week-over-week, indicating performance decline."
-    elif trend < 0:
-        trend_msg = "DSAT is improving, showing recovery."
-    else:
-        trend_msg = "DSAT is stable."
+**Agent:** {agent}  
+**Performance:** Strong Performer
 
-    # 🔥 FIXED SENTIMENT
-    if trend > 0 or dsat_ratio > 0.3:
-        sentiment_msg = "Customer sentiment is negative due to increasing dissatisfaction."
-    elif trend < 0 and dsat_ratio < 0.2:
-        sentiment_msg = "Customer sentiment is improving with better experience."
-    else:
-        sentiment_msg = "Customer sentiment is mixed."
+- Predicted DSAT: {int(pred)}
+- Risk Score: {int(risk)}
 
-    # COACHING
-    if trend > 0:
-        coaching = "- Immediate action needed\n- Focus on root cause"
-    elif trend < 0:
-        coaching = "- Maintain current performance\n- Continue good practices"
+✅ The agent is consistently delivering a good customer experience.
+
+### 💡 Strengths
+- Low DSAT trend
+- Stable performance
+- Good handling across key areas
+
+👉 Continue current approach and maintain consistency.
+"""
+
+    # -------------------------------
+    # LOW PERFORMANCE LOGIC
+    # -------------------------------
+    if top_issue == "Communication":
+        problem = "Customer dissatisfaction is driven by communication gaps."
+        coaching = "- Improve empathy\n- Avoid scripted responses\n- Listen actively"
+    elif top_issue == "Process":
+        problem = "Customer dissatisfaction is driven by delays and inefficient handling."
+        coaching = "- Reduce wait time\n- Avoid transfers\n- Take ownership"
     else:
-        coaching = "- Monitor performance"
+        problem = "Customer dissatisfaction is driven by product-related issues."
+        coaching = "- Improve product knowledge\n- Escalate issues faster"
+
+    trend_msg = "DSAT is rising, indicating declining performance." if trend > 0 else "Performance needs monitoring."
 
     return f"""
 ### 🤖 AI Insight
 
 **Agent:** {agent}  
-**Performance:** {level}
+**Performance:** Needs Attention
 
 - Predicted DSAT: {int(pred)}
 - Risk Score: {int(risk)}
 
-{trend_msg}  
-{sentiment_msg}
+{trend_msg}
 
-### Key Issue: {top_issue}
+### 🔍 Root Cause
+{problem}
 
-### Coaching:
+### 💡 Recommended Actions
 {coaching}
 """
 
-# -------------------------------
-# CALCULATIONS
-# -------------------------------
 trend = latest['DSAT_lag_1'] - latest['DSAT_lag_4']
 
-total_tickets = len(agent_comments)
-total_dsat = agent_comments['DSAT'].sum()
-dsat_ratio = total_dsat / total_tickets if total_tickets > 0 else 0
-
-# -------------------------------
-# OUTPUT
-# -------------------------------
 st.subheader("🤖 AI Insight")
-st.markdown(generate_ai_insight(agent, prediction, risk, issue_df, trend, dsat_ratio))
+st.markdown(generate_ai_insight(agent, prediction, risk, issue_df, trend))
