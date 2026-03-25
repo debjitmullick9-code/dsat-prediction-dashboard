@@ -28,15 +28,16 @@ df['DSAT'] = df['Customer_Effortless'].apply(lambda x: 1 if x == "No" else 0)
 df['Sentiment'] = df['Customer_Comment'].apply(lambda x: TextBlob(str(x)).sentiment.polarity)
 
 # -------------------------------
-# ISSUE LABEL FUNCTION
+# IMPROVED LABELING (REDUCE LEAKAGE)
 # -------------------------------
 def label_issue(comment):
     c = str(comment).lower()
-    if any(w in c for w in ["rude","unhelpful","confusing","agent"]):
+
+    if any(w in c for w in ["angry","bad support","not helpful"]):
         return "Communication"
-    elif any(w in c for w in ["delay","long","wait","slow","time"]):
+    elif any(w in c for w in ["slow response","took long","waiting"]):
         return "Process"
-    elif any(w in c for w in ["not working","bug","broken","glitch"]):
+    elif any(w in c for w in ["error","failed","issue in app"]):
         return "Product"
     else:
         return "Other"
@@ -93,7 +94,7 @@ mae = mean_absolute_error(y,preds)
 r2 = r2_score(y,preds)
 
 # -------------------------------
-# ACCURACY DISPLAY
+# SYSTEM ACCURACY
 # -------------------------------
 st.subheader("📊 System Accuracy Overview")
 
@@ -102,28 +103,36 @@ col1.metric("Issue Detection Accuracy", f"{round(nlp_accuracy*100,1)}%")
 col2.metric("Prediction Reliability (R²)", round(r2,2))
 col3.metric("Avg Prediction Error", round(mae,2))
 
-st.caption("Accuracy is evaluated on unseen test data")
+st.caption("Accuracy is estimated and may vary with real-world labeled data")
 
 # -------------------------------
-# ALERT SYSTEM (NEW 🔥)
+# ALERT SYSTEM
 # -------------------------------
 st.subheader("🚨 Alerts & Risk Monitoring")
 
 agent_summary = weekly_df.groupby('Agent_Name')['DSAT_Count'].mean().reset_index()
 agent_summary['Risk'] = (agent_summary['DSAT_Count'] - y.mean())/y.std()*10 + 50
 
-high_risk_agents = agent_summary[agent_summary['Risk'] > 60]
-moderate_agents = agent_summary[(agent_summary['Risk'] > 45) & (agent_summary['Risk'] <= 60)]
+high_risk = agent_summary[agent_summary['Risk'] > 60]
+moderate = agent_summary[(agent_summary['Risk'] > 45) & (agent_summary['Risk'] <= 60)]
 
-colA, colB = st.columns(2)
+colA,colB = st.columns(2)
 
 with colA:
-    st.error(f"🔴 High Risk Agents: {len(high_risk_agents)}")
-    st.dataframe(high_risk_agents.sort_values("Risk", ascending=False).head(5))
+    st.error(f"🔴 High Risk Agents: {len(high_risk)}")
+    st.dataframe(high_risk.sort_values("Risk", ascending=False).head(5))
 
 with colB:
-    st.warning(f"🟡 Moderate Risk Agents: {len(moderate_agents)}")
-    st.dataframe(moderate_agents.sort_values("Risk", ascending=False).head(5))
+    st.warning(f"🟡 Moderate Risk Agents: {len(moderate)}")
+    st.dataframe(moderate.sort_values("Risk", ascending=False).head(5))
+
+# -------------------------------
+# LOW RISK (FIXED)
+# -------------------------------
+st.subheader("🟢 Low Risk Agents")
+
+low_risk = agent_summary.sort_values("Risk").head(10)
+st.dataframe(low_risk)
 
 # -------------------------------
 # AGENT SELECTION
@@ -140,9 +149,9 @@ risk = (prediction - y.mean())/y.std()*10 + 50
 # AGENT ALERT
 # -------------------------------
 if risk > 60:
-    st.error("🚨 ALERT: High DSAT Risk – Immediate action required")
+    st.error("🚨 High Risk – Immediate Action Needed")
 elif risk > 45:
-    st.warning("⚠️ Warning: Moderate Risk – Monitor closely")
+    st.warning("⚠️ Moderate Risk – Monitor Closely")
 else:
     st.success("✅ Stable Performance")
 
@@ -153,16 +162,16 @@ st.metric("Predicted DSAT", int(prediction))
 st.metric("Risk Score", int(risk))
 
 # -------------------------------
-# TREND ALERT
+# TREND
 # -------------------------------
 trend = latest['DSAT_lag_1'] - latest['DSAT_lag_4']
 
 if trend > 0:
-    st.warning("📈 DSAT is increasing")
+    st.warning("📈 DSAT Increasing")
 elif trend < 0:
-    st.success("📉 DSAT is improving")
+    st.success("📉 DSAT Improving")
 else:
-    st.info("➖ DSAT is stable")
+    st.info("➖ DSAT Stable")
 
 st.line_chart(agent_data.set_index('Week')['DSAT_Count'])
 
@@ -182,33 +191,73 @@ st.subheader("📊 Issue Breakdown")
 st.dataframe(issue_df)
 
 # -------------------------------
-# AI INSIGHT
+# FINAL AI INSIGHT (BEST VERSION)
 # -------------------------------
-def generate_insight(agent, pred, risk, issue_df, trend):
+def generate_insight(agent, pred, risk, sentiment, issue_df, trend):
 
     top_issue = issue_df.iloc[0]["Issue"]
 
     if risk < 45:
-        level = "strong"
+        level = "excellent"
     elif risk < 60:
         level = "moderate"
     else:
-        level = "critical"
+        level = "high risk"
+
+    if trend > 0:
+        trend_msg = "increasing"
+    elif trend < 0:
+        trend_msg = "improving"
+    else:
+        trend_msg = "stable"
+
+    if top_issue == "Communication":
+        action = """
+- Improve clarity in communication  
+- Use empathy while handling customers  
+- Avoid repeating scripted responses  
+"""
+    elif top_issue == "Process":
+        action = """
+- Reduce response and resolution time  
+- Avoid long waiting periods  
+- Provide timely updates  
+"""
+    else:
+        action = """
+- Improve product understanding  
+- Escalate recurring issues  
+- Provide accurate troubleshooting  
+"""
+
+    positive = ""
+    if level == "excellent":
+        positive = "\n🌟 Strong performance — consider mentoring others."
 
     return f"""
 ### 🤖 AI Insight
 
 Agent **{agent}** performance is **{level}**.
 
+### 📊 Performance Summary:
 - Predicted DSAT: **{int(pred)}**
 - Risk Score: **{int(risk)}**
+- Trend: **{trend_msg}**
+- Sentiment: {"positive" if sentiment > 0 else "negative"}
 
-### 🔍 Key Issue: {top_issue}
+### 🔍 Key Opportunity:
+**{top_issue}**
 
-### 💡 Recommendation:
-Focus on improving **{top_issue}** related interactions to reduce DSAT.
+### 💡 Recommended Actions:
+{action}
+
+### 🎯 Impact:
+Improving this area will reduce DSAT and improve customer experience.
+{positive}
 """
+
+sentiment = agent_comments['Sentiment'].mean()
 
 st.subheader("🤖 AI Insight")
 
-st.markdown(generate_insight(agent,prediction,risk,issue_df,trend))
+st.markdown(generate_insight(agent,prediction,risk,sentiment,issue_df,trend))
