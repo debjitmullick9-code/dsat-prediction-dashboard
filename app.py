@@ -135,20 +135,39 @@ y = weekly_df['DSAT_Count']
 model = RandomForestRegressor()
 model.fit(X,y)
 
-preds = model.predict(X)
+# -------------------------------
+# SELECT AGENT FIRST (IMPORTANT CHANGE)
+# -------------------------------
+agent = st.selectbox("Select Agent", weekly_df['Agent_Name'].unique())
 
-mae = mean_absolute_error(y,preds)
-r2 = r2_score(y,preds)
+agent_data = weekly_df[weekly_df['Agent_Name']==agent].sort_values('Week')
+latest = agent_data.iloc[-1]
+
+prediction = model.predict([latest[features]])[0]
+risk = (prediction - y.mean())/y.std()*10 + 50
 
 # -------------------------------
-# METRICS
+# AGENT-SPECIFIC METRICS (FIXED)
 # -------------------------------
+agent_actual = agent_data['DSAT_Count'].values
+agent_pred = model.predict(agent_data[features])
+
+agent_mae = mean_absolute_error(agent_actual, agent_pred)
+
+agent_variance = np.var(agent_actual)
+agent_error_var = np.var(agent_actual - agent_pred)
+
+if agent_variance != 0:
+    agent_r2 = 1 - (agent_error_var / agent_variance)
+else:
+    agent_r2 = 0
+
 st.subheader("📊 System Accuracy Overview")
 
 c1,c2,c3 = st.columns(3)
 c1.metric("Issue Detection Accuracy", f"{round(nlp_accuracy*100,1)}%")
-c2.metric("Prediction Reliability (R²)", round(r2,2))
-c3.metric("Avg Prediction Error", round(mae,2))
+c2.metric("Prediction Reliability", round(agent_r2,2))
+c3.metric("Avg Prediction Error", round(agent_mae,2))
 
 # -------------------------------
 # ALERT SYSTEM
@@ -164,16 +183,8 @@ st.subheader("🟢 Low Risk Agents")
 st.dataframe(agent_summary.sort_values("Risk").head(10))
 
 # -------------------------------
-# AGENT VIEW
+# KPI
 # -------------------------------
-agent = st.selectbox("Select Agent", weekly_df['Agent_Name'].unique())
-
-agent_data = weekly_df[weekly_df['Agent_Name']==agent].sort_values('Week')
-latest = agent_data.iloc[-1]
-
-prediction = model.predict([latest[features]])[0]
-risk = (prediction - y.mean())/y.std()*10 + 50
-
 st.metric("Predicted DSAT", int(prediction))
 st.metric("Risk Score", int(risk))
 
@@ -206,7 +217,7 @@ st.dataframe(issue_df)
 st.bar_chart(issue_df.set_index("Issue")["Count"])
 
 # -------------------------------
-# 🔥 PREMIUM AI INSIGHT ENGINE
+# 🔥 FINAL AI INSIGHT (FIXED)
 # -------------------------------
 def generate_ai_insight(agent, pred, risk, issue_df, sentiment, trend):
 
@@ -215,14 +226,20 @@ def generate_ai_insight(agent, pred, risk, issue_df, sentiment, trend):
 
     if risk < 45:
         level = "Strong Performer"
-        summary = f"{agent} is consistently delivering a strong customer experience."
     elif risk < 60:
         level = "Watchlist"
-        summary = f"{agent} shows early signs of performance inconsistency."
     else:
         level = "Critical"
-        summary = f"{agent} is at high risk with repeated customer dissatisfaction."
 
+    # FIXED SENTIMENT ALIGNMENT
+    if trend > 0:
+        sentiment_msg = "Customer sentiment is turning negative as dissatisfaction increases."
+    elif trend < 0:
+        sentiment_msg = "Customer sentiment is improving along with performance recovery."
+    else:
+        sentiment_msg = "Customer sentiment is stable."
+
+    # TREND MESSAGE
     if trend > 0:
         trend_msg = "DSAT is rising week-over-week, indicating performance decline."
     elif trend < 0:
@@ -230,34 +247,23 @@ def generate_ai_insight(agent, pred, risk, issue_df, sentiment, trend):
     else:
         trend_msg = "DSAT is stable."
 
-    if sentiment > 0:
-        sentiment_msg = "Customer tone is mostly positive."
+    # DYNAMIC COACHING
+    if trend > 0:
+        if top_issue == "Communication":
+            coaching = "- Improve empathy and avoid scripted responses\n- Focus on listening skills"
+            impact = "Communication issues are driving dissatisfaction."
+        elif top_issue == "Process":
+            coaching = "- Reduce wait time\n- Avoid multiple transfers\n- Take ownership"
+            impact = "Process delays are increasing DSAT."
+        else:
+            coaching = "- Improve product knowledge\n- Escalate recurring issues"
+            impact = "Product gaps are impacting resolution."
+    elif trend < 0:
+        coaching = "- Maintain current performance\n- Continue best practices"
+        impact = "Performance improvements are visible."
     else:
-        sentiment_msg = "Customer tone is negative, indicating repeated issues."
-
-    if top_issue == "Communication":
-        coaching = """
-- Improve active listening and avoid interrupting customers  
-- Replace scripted replies with personalized responses  
-- Use empathy statements during difficult interactions  
-"""
-        impact = "Communication gaps are affecting customer trust."
-
-    elif top_issue == "Process":
-        coaching = """
-- Reduce wait time and avoid unnecessary transfers  
-- Provide clear timelines for resolution  
-- Take full ownership of customer issues  
-"""
-        impact = "Process inefficiencies are driving customer frustration."
-
-    else:
-        coaching = """
-- Strengthen product knowledge  
-- Escalate recurring technical issues early  
-- Ensure accurate troubleshooting  
-"""
-        impact = "Product-related issues are leading to unresolved tickets."
+        coaching = "- Maintain consistency and monitor trends"
+        impact = "No major issue detected."
 
     return f"""
 ### 🤖 AI Performance Insight
@@ -267,7 +273,7 @@ def generate_ai_insight(agent, pred, risk, issue_df, sentiment, trend):
 
 ---
 
-### 📊 Performance Summary
+### 📊 Summary
 - Predicted DSAT: **{int(pred)}**
 - Risk Score: **{int(risk)}**
 - {trend_msg}
@@ -281,13 +287,8 @@ def generate_ai_insight(agent, pred, risk, issue_df, sentiment, trend):
 
 ---
 
-### 💡 Coaching Recommendations
+### 💡 Coaching
 {coaching}
-
----
-
-### 🎯 Manager Note
-Focus on this area in the next QA review cycle to reduce DSAT and improve consistency.
 """
 
 trend = latest['DSAT_lag_1'] - latest['DSAT_lag_4']
