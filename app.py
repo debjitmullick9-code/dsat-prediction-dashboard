@@ -13,11 +13,6 @@ from sklearn.metrics import accuracy_score, mean_absolute_error, r2_score
 from textblob import TextBlob
 
 # -------------------------------
-# OPENAI CLIENT
-# -------------------------------
-client = OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
-
-# -------------------------------
 # PAGE CONFIG
 # -------------------------------
 st.set_page_config(page_title="DSAT Intelligence", layout="wide")
@@ -186,7 +181,7 @@ st.metric("Risk Score", int(risk))
 st.line_chart(agent_data.set_index('Week')['DSAT_Count'])
 
 # -------------------------------
-# ISSUE BREAKDOWN (FIXED)
+# ISSUE BREAKDOWN
 # -------------------------------
 agent_comments = df[df['Agent_Name']==agent]
 dsat_comments = agent_comments[agent_comments['DSAT']==1]['Customer_Comment']
@@ -212,34 +207,70 @@ st.dataframe(issue_df)
 st.bar_chart(issue_df.set_index("Issue")["Count"])
 
 # -------------------------------
-# 🤖 GPT AI INSIGHT
+# 🤖 SMART AI INSIGHT (NO API)
 # -------------------------------
-def generate_ai_insight(agent, pred, risk, issue_df):
+def generate_ai_insight(agent, pred, risk, issue_df, sentiment, trend):
 
-    issue_summary = ", ".join(
-        [f"{row['Issue']} ({row['Count']})" for _, row in issue_df.iterrows()]
-    )
+    top_issue = issue_df.sort_values("Count", ascending=False).iloc[0]["Issue"]
 
-    prompt = f"""
-    Agent: {agent}
-    Predicted DSAT: {int(pred)}
-    Risk Score: {int(risk)}
-    Issues: {issue_summary}
+    if risk < 45:
+        level = "Excellent"
+        tone = "Agent is performing very well."
+    elif risk < 60:
+        level = "Moderate"
+        tone = "Performance needs monitoring."
+    else:
+        level = "High Risk"
+        tone = "Immediate improvement required."
 
-    Give professional performance summary and improvement suggestions.
-    """
+    if trend > 0:
+        trend_msg = "DSAT is increasing."
+    elif trend < 0:
+        trend_msg = "DSAT is improving."
+    else:
+        trend_msg = "DSAT is stable."
 
-    try:
-        response = client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[{"role":"user","content":prompt}]
-        )
-        return response.choices[0].message.content
+    if sentiment > 0:
+        sentiment_msg = "Customer sentiment is positive."
+    else:
+        sentiment_msg = "Customer sentiment is negative."
 
-    except Exception as e:
-        return f"AI Insight unavailable: {str(e)}"
+    if top_issue == "Communication":
+        action = "- Improve clarity and empathy\n- Avoid scripted responses"
+    elif top_issue == "Process":
+        action = "- Reduce wait time\n- Improve resolution speed"
+    else:
+        action = "- Improve product knowledge\n- Escalate recurring issues"
+
+    return f"""
+### 🤖 AI Insight
+
+**Agent:** {agent}  
+**Performance:** {level}
+
+### 📊 Summary
+- Predicted DSAT: {int(pred)}
+- Risk Score: {int(risk)}
+- {trend_msg}
+- {sentiment_msg}
+
+### 🔍 Key Issue
+{top_issue}
+
+### 💡 Recommendations
+{action}
+"""
+
+trend = latest['DSAT_lag_1'] - latest['DSAT_lag_4']
+sentiment = agent_comments['Sentiment'].mean()
 
 st.subheader("🤖 AI Insight")
 
-ai_output = generate_ai_insight(agent, prediction, risk, issue_df)
-st.markdown(ai_output)
+st.markdown(generate_ai_insight(
+    agent,
+    prediction,
+    risk,
+    issue_df,
+    sentiment,
+    trend
+))
