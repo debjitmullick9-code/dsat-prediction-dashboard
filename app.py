@@ -11,7 +11,6 @@ from sklearn.model_selection import train_test_split
 from sklearn.metrics import accuracy_score, mean_absolute_error, r2_score
 
 from textblob import TextBlob
-from openai import OpenAI
 
 # -------------------------------
 # OPENAI CLIENT
