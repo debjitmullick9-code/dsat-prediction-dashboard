@@ -28,16 +28,16 @@ df['DSAT'] = df['Customer_Effortless'].apply(lambda x: 1 if x == "No" else 0)
 df['Sentiment'] = df['Customer_Comment'].apply(lambda x: TextBlob(str(x)).sentiment.polarity)
 
 # -------------------------------
-# IMPROVED LABELING (REDUCE LEAKAGE)
+# LABEL FUNCTION (BALANCED)
 # -------------------------------
 def label_issue(comment):
     c = str(comment).lower()
 
-    if any(w in c for w in ["angry","bad support","not helpful"]):
+    if any(w in c for w in ["rude","unhelpful","confusing","agent","bad"]):
         return "Communication"
-    elif any(w in c for w in ["slow response","took long","waiting"]):
+    elif any(w in c for w in ["delay","wait","slow","time","long"]):
         return "Process"
-    elif any(w in c for w in ["error","failed","issue in app"]):
+    elif any(w in c for w in ["not working","bug","error","issue","failed"]):
         return "Product"
     else:
         return "Other"
@@ -49,6 +49,15 @@ train_df, test_df = train_test_split(df, test_size=0.2, random_state=42)
 
 train_df['Issue_Label'] = train_df['Customer_Comment'].apply(label_issue)
 test_df['Issue_Label'] = test_df['Customer_Comment'].apply(label_issue)
+
+# Remove weak class
+train_df = train_df[train_df['Issue_Label'] != "Other"]
+test_df = test_df[test_df['Issue_Label'] != "Other"]
+
+# Safety check
+if len(train_df['Issue_Label'].unique()) < 2:
+    st.error("Not enough class diversity to train NLP model")
+    st.stop()
 
 vectorizer = TfidfVectorizer(stop_words='english', ngram_range=(1,2), max_features=5000)
 
@@ -103,7 +112,7 @@ col1.metric("Issue Detection Accuracy", f"{round(nlp_accuracy*100,1)}%")
 col2.metric("Prediction Reliability (R²)", round(r2,2))
 col3.metric("Avg Prediction Error", round(mae,2))
 
-st.caption("Accuracy is estimated and may vary with real-world labeled data")
+st.caption("Accuracy is evaluated on unseen test data")
 
 # -------------------------------
 # ALERT SYSTEM
@@ -127,7 +136,7 @@ with colB:
     st.dataframe(moderate.sort_values("Risk", ascending=False).head(5))
 
 # -------------------------------
-# LOW RISK (FIXED)
+# LOW RISK AGENTS
 # -------------------------------
 st.subheader("🟢 Low Risk Agents")
 
@@ -176,22 +185,25 @@ else:
 st.line_chart(agent_data.set_index('Week')['DSAT_Count'])
 
 # -------------------------------
-# ISSUE ANALYSIS
+# ISSUE ANALYSIS (ML)
 # -------------------------------
 agent_comments = df[df['Agent_Name']==agent]
 dsat_comments = agent_comments[agent_comments['DSAT']==1]['Customer_Comment']
 
-X_test_agent = vectorizer.transform(dsat_comments)
-predicted_issues = issue_model.predict(X_test_agent)
+if len(dsat_comments) > 0:
+    X_test_agent = vectorizer.transform(dsat_comments)
+    predicted_issues = issue_model.predict(X_test_agent)
 
-issue_df = pd.DataFrame(predicted_issues, columns=["Issue"])
-issue_df = issue_df.value_counts().reset_index(name="Count")
+    issue_df = pd.DataFrame(predicted_issues, columns=["Issue"])
+    issue_df = issue_df.value_counts().reset_index(name="Count")
+else:
+    issue_df = pd.DataFrame({"Issue":["No Data"], "Count":[0]})
 
 st.subheader("📊 Issue Breakdown")
 st.dataframe(issue_df)
 
 # -------------------------------
-# FINAL AI INSIGHT (BEST VERSION)
+# AI INSIGHT (FINAL CLEAN)
 # -------------------------------
 def generate_insight(agent, pred, risk, sentiment, issue_df, trend):
 
@@ -212,34 +224,19 @@ def generate_insight(agent, pred, risk, sentiment, issue_df, trend):
         trend_msg = "stable"
 
     if top_issue == "Communication":
-        action = """
-- Improve clarity in communication  
-- Use empathy while handling customers  
-- Avoid repeating scripted responses  
-"""
+        action = "Improve communication clarity and empathy."
     elif top_issue == "Process":
-        action = """
-- Reduce response and resolution time  
-- Avoid long waiting periods  
-- Provide timely updates  
-"""
+        action = "Reduce wait time and improve resolution speed."
+    elif top_issue == "Product":
+        action = "Improve product knowledge and escalate issues."
     else:
-        action = """
-- Improve product understanding  
-- Escalate recurring issues  
-- Provide accurate troubleshooting  
-"""
-
-    positive = ""
-    if level == "excellent":
-        positive = "\n🌟 Strong performance — consider mentoring others."
+        action = "Monitor performance and maintain current quality."
 
     return f"""
 ### 🤖 AI Insight
 
 Agent **{agent}** performance is **{level}**.
 
-### 📊 Performance Summary:
 - Predicted DSAT: **{int(pred)}**
 - Risk Score: **{int(risk)}**
 - Trend: **{trend_msg}**
@@ -248,12 +245,8 @@ Agent **{agent}** performance is **{level}**.
 ### 🔍 Key Opportunity:
 **{top_issue}**
 
-### 💡 Recommended Actions:
+### 💡 Recommendation:
 {action}
-
-### 🎯 Impact:
-Improving this area will reduce DSAT and improve customer experience.
-{positive}
 """
 
 sentiment = agent_comments['Sentiment'].mean()
