@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
+import os
 
 from sklearn.ensemble import RandomForestRegressor
 from sklearn.linear_model import LogisticRegression
@@ -16,12 +17,43 @@ st.set_page_config(page_title="DSAT Intelligence", layout="wide")
 st.title("🚀 DSAT Intelligence Dashboard")
 
 # -------------------------------
-# LOAD DATA
+# SAFE DATA LOADING (FIXED)
 # -------------------------------
-df = pd.read_csv("bpo_customer_experience_dataset.csv")
-df['Week'] = pd.to_datetime(df['Week'])
+file_path = "bpo_customer_experience_dataset.csv"
 
-df['DSAT'] = df['Customer_Effortless'].apply(lambda x: 1 if x == "No" else 0)
+if not os.path.exists(file_path):
+    st.error("❌ Dataset file not found. Upload correct CSV.")
+    st.stop()
+
+try:
+    df = pd.read_csv(file_path)
+except:
+    try:
+        df = pd.read_csv(file_path, sep="|")
+    except:
+        try:
+            df = pd.read_csv(file_path, encoding='latin1')
+        except Exception as e:
+            st.error("❌ Unable to read dataset")
+            st.text(str(e))
+            st.stop()
+
+df.columns = df.columns.str.strip()
+
+if df.empty:
+    st.error("❌ Dataset is empty")
+    st.stop()
+
+# Preview (for debug)
+st.success(f"✅ Dataset Loaded: {df.shape[0]} rows")
+
+# -------------------------------
+# BASIC CLEANING
+# -------------------------------
+df['Week'] = pd.to_datetime(df['Week'], errors='coerce')
+df = df.dropna(subset=['Week'])
+
+df['DSAT'] = df['Customer_Effortless'].apply(lambda x: 1 if str(x).lower() == "no" else 0)
 df['Sentiment'] = df['Customer_Comment'].apply(lambda x: TextBlob(str(x)).sentiment.polarity)
 
 # -------------------------------
@@ -30,58 +62,52 @@ df['Sentiment'] = df['Customer_Comment'].apply(lambda x: TextBlob(str(x)).sentim
 def label_issue(comment):
     c = str(comment).lower()
 
-    if any(w in c for w in ["rude","unhelpful","confusing","agent","bad"]):
+    if any(w in c for w in ["rude","unhelpful","confusing","bad"]):
         return "Communication"
-    elif any(w in c for w in ["delay","wait","slow","time","long"]):
+    elif any(w in c for w in ["delay","wait","slow","long"]):
         return "Process"
-    elif any(w in c for w in ["not working","bug","error","issue","failed"]):
+    elif any(w in c for w in ["error","bug","failed","not working"]):
         return "Product"
     else:
         return "Other"
 
-# -------------------------------
-# NLP MODEL (TRUE REALISTIC FIX)
-# -------------------------------
 df['Issue_Label'] = df['Customer_Comment'].apply(label_issue)
 
+# -------------------------------
+# NLP MODEL (STABLE VERSION)
+# -------------------------------
 df_clean = df[df['Issue_Label'] != "Other"].copy()
 
-# Shuffle dataset
-df_clean = df_clean.sample(frac=1, random_state=42).reset_index(drop=True)
+if len(df_clean) < 50:
+    st.warning("⚠️ Not enough data for NLP model")
+    nlp_accuracy = 0.0
+else:
+    df_clean = df_clean.sample(frac=1, random_state=42).reset_index(drop=True)
 
-# Split
-split_index = int(len(df_clean) * 0.6)
-train_sample = df_clean.iloc[:split_index].copy()
-test_sample = df_clean.iloc[split_index:].copy()
+    split = int(len(df_clean) * 0.6)
+    train_sample = df_clean.iloc[:split]
+    test_sample = df_clean.iloc[split:]
 
-# 🔥 RANDOMIZE LABELS (CRITICAL FIX)
-train_sample['Issue_Label'] = np.random.permutation(train_sample['Issue_Label'].values)
+    vectorizer = TfidfVectorizer(
+        stop_words='english',
+        ngram_range=(1,2),
+        max_features=3000
+    )
 
-# Vectorization
-vectorizer = TfidfVectorizer(
-    stop_words='english',
-    ngram_range=(1,2),
-    max_features=3000
-)
+    X_train = vectorizer.fit_transform(train_sample['Customer_Comment'])
+    y_train = train_sample['Issue_Label']
 
-X_train = vectorizer.fit_transform(train_sample['Customer_Comment'])
-y_train = train_sample['Issue_Label']
+    X_test = vectorizer.transform(test_sample['Customer_Comment'])
+    y_test = test_sample['Issue_Label']
 
-X_test = vectorizer.transform(test_sample['Customer_Comment'])
-y_test = test_sample['Issue_Label']
+    if len(set(y_train)) < 2:
+        nlp_accuracy = 0.0
+    else:
+        issue_model = LogisticRegression(max_iter=200)
+        issue_model.fit(X_train, y_train)
 
-# Safety check
-if len(set(y_train)) < 2:
-    st.error("Not enough class diversity")
-    st.stop()
-
-# Train model
-issue_model = LogisticRegression(max_iter=200)
-issue_model.fit(X_train, y_train)
-
-# Accuracy
-y_pred = issue_model.predict(X_test)
-nlp_accuracy = accuracy_score(y_test, y_pred)
+        y_pred = issue_model.predict(X_test)
+        nlp_accuracy = accuracy_score(y_test, y_pred)
 
 # -------------------------------
 # DSAT MODEL
@@ -113,16 +139,16 @@ mae = mean_absolute_error(y,preds)
 r2 = r2_score(y,preds)
 
 # -------------------------------
-# SYSTEM ACCURACY
+# ACCURACY UI
 # -------------------------------
 st.subheader("📊 System Accuracy Overview")
 
-col1,col2,col3 = st.columns(3)
-col1.metric("Issue Detection Accuracy", f"{round(nlp_accuracy*100,1)}%")
-col2.metric("Prediction Reliability (R²)", round(r2,2))
-col3.metric("Avg Prediction Error", round(mae,2))
+c1,c2,c3 = st.columns(3)
+c1.metric("Issue Detection Accuracy", f"{round(nlp_accuracy*100,1)}%")
+c2.metric("Prediction Reliability (R²)", round(r2,2))
+c3.metric("Avg Prediction Error", round(mae,2))
 
-st.caption("Accuracy validated with randomized labels to avoid leakage")
+st.caption("Accuracy depends on dataset quality")
 
 # -------------------------------
 # ALERT SYSTEM
@@ -132,28 +158,27 @@ st.subheader("🚨 Alerts & Risk Monitoring")
 agent_summary = weekly_df.groupby('Agent_Name')['DSAT_Count'].mean().reset_index()
 agent_summary['Risk'] = (agent_summary['DSAT_Count'] - y.mean())/y.std()*10 + 50
 
-high_risk = agent_summary[agent_summary['Risk'] > 60]
+high = agent_summary[agent_summary['Risk'] > 60]
 moderate = agent_summary[(agent_summary['Risk'] > 45) & (agent_summary['Risk'] <= 60)]
 
 colA,colB = st.columns(2)
 
 with colA:
-    st.error(f"🔴 High Risk Agents: {len(high_risk)}")
-    st.dataframe(high_risk.sort_values("Risk", ascending=False).head(5))
+    st.error(f"High Risk Agents: {len(high)}")
+    st.dataframe(high.head())
 
 with colB:
-    st.warning(f"🟡 Moderate Risk Agents: {len(moderate)}")
-    st.dataframe(moderate.sort_values("Risk", ascending=False).head(5))
+    st.warning(f"Moderate Risk Agents: {len(moderate)}")
+    st.dataframe(moderate.head())
 
 # -------------------------------
-# LOW RISK AGENTS
+# LOW RISK
 # -------------------------------
 st.subheader("🟢 Low Risk Agents")
-low_risk = agent_summary.sort_values("Risk").head(10)
-st.dataframe(low_risk)
+st.dataframe(agent_summary.sort_values("Risk").head(10))
 
 # -------------------------------
-# AGENT SELECTION
+# AGENT VIEW
 # -------------------------------
 agent = st.selectbox("Select Agent", weekly_df['Agent_Name'].unique())
 
@@ -163,27 +188,8 @@ latest = agent_data.iloc[-1]
 prediction = model.predict([latest[features]])[0]
 risk = (prediction - y.mean())/y.std()*10 + 50
 
-# Alerts
-if risk > 60:
-    st.error("🚨 High Risk – Immediate Action Needed")
-elif risk > 45:
-    st.warning("⚠️ Moderate Risk – Monitor Closely")
-else:
-    st.success("✅ Stable Performance")
-
-# KPI
 st.metric("Predicted DSAT", int(prediction))
 st.metric("Risk Score", int(risk))
-
-# Trend
-trend = latest['DSAT_lag_1'] - latest['DSAT_lag_4']
-
-if trend > 0:
-    st.warning("📈 DSAT Increasing")
-elif trend < 0:
-    st.success("📉 DSAT Improving")
-else:
-    st.info("➖ DSAT Stable")
 
 st.line_chart(agent_data.set_index('Week')['DSAT_Count'])
 
@@ -193,11 +199,11 @@ st.line_chart(agent_data.set_index('Week')['DSAT_Count'])
 agent_comments = df[df['Agent_Name']==agent]
 dsat_comments = agent_comments[agent_comments['DSAT']==1]['Customer_Comment']
 
-if len(dsat_comments) > 0:
+if len(dsat_comments) > 0 and 'issue_model' in globals():
     X_test_agent = vectorizer.transform(dsat_comments)
-    predicted_issues = issue_model.predict(X_test_agent)
+    pred_issues = issue_model.predict(X_test_agent)
 
-    issue_df = pd.DataFrame(predicted_issues, columns=["Issue"])
+    issue_df = pd.DataFrame(pred_issues, columns=["Issue"])
     issue_df = issue_df.value_counts().reset_index(name="Count")
 else:
     issue_df = pd.DataFrame({"Issue":["No Data"], "Count":[0]})
@@ -206,35 +212,33 @@ st.subheader("📊 Issue Breakdown")
 st.dataframe(issue_df)
 
 # -------------------------------
-# AI INSIGHT
+# AI INSIGHT (ONLY ONE)
 # -------------------------------
-def generate_insight(agent, pred, risk, sentiment, issue_df):
+def generate_insight(agent, pred, risk, issue_df):
 
     top_issue = issue_df.iloc[0]["Issue"]
 
     if risk < 45:
-        level = "excellent"
+        level = "Good"
     elif risk < 60:
-        level = "moderate"
+        level = "Moderate"
     else:
-        level = "high risk"
+        level = "High Risk"
 
     return f"""
 ### 🤖 AI Insight
 
-Agent **{agent}** performance is **{level}**.
+Agent **{agent}** is at **{level} performance**.
 
 - Predicted DSAT: **{int(pred)}**
 - Risk Score: **{int(risk)}**
 
-### 🔍 Key Issue:
+### Key Issue:
 **{top_issue}**
 
-### 💡 Recommendation:
-Focus on improving {top_issue} related interactions.
+### Recommendation:
+Focus on improving {top_issue} to reduce DSAT.
 """
 
-sentiment = agent_comments['Sentiment'].mean()
-
 st.subheader("🤖 AI Insight")
-st.markdown(generate_insight(agent,prediction,risk,sentiment,issue_df))
+st.markdown(generate_insight(agent, prediction, risk, issue_df))
