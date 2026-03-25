@@ -27,7 +27,7 @@ df = df.dropna(subset=['Week'])
 df['DSAT'] = df['Customer_Effortless'].apply(lambda x: 1 if str(x).lower() == "no" else 0)
 
 # -------------------------------
-# ISSUE MODEL (PURE ML)
+# ISSUE MODEL (ML)
 # -------------------------------
 def weak_label(text):
     t = str(text).lower()
@@ -81,26 +81,18 @@ model = RandomForestRegressor()
 model.fit(X,y)
 
 # -------------------------------
-# AGENT SELECT
+# 📊 MODEL ACCURACY
 # -------------------------------
-agent = st.selectbox("Select Agent", weekly_df['Agent_Name'].unique())
+st.subheader("📊 Model Accuracy")
 
-agent_data = weekly_df[weekly_df['Agent_Name']==agent].sort_values('Week')
-latest = agent_data.iloc[-1]
+sample_agent = weekly_df['Agent_Name'].iloc[0]
+sample_data = weekly_df[weekly_df['Agent_Name']==sample_agent]
 
-prediction = model.predict([latest[features]])[0]
-risk = (prediction - y.mean())/y.std()*10 + 50
-
-# -------------------------------
-# 📊 MODEL ACCURACY (RENAMED)
-# -------------------------------
-agent_actual = agent_data['DSAT_Count']
-agent_pred = model.predict(agent_data[features])
+agent_actual = sample_data['DSAT_Count']
+agent_pred = model.predict(sample_data[features])
 
 mae = mean_absolute_error(agent_actual, agent_pred)
 r2 = r2_score(agent_actual, agent_pred)
-
-st.subheader("📊 Model Accuracy")
 
 c1, c2, c3 = st.columns(3)
 c1.metric("Issue Detection Accuracy", f"{round(nlp_accuracy*100,1)}%")
@@ -126,14 +118,25 @@ with col2:
     st.dataframe(agent_summary[agent_summary['Risk'] < 45].head(5))
 
 # -------------------------------
+# 🔽 AGENT SELECT
+# -------------------------------
+agent = st.selectbox("Select Agent", weekly_df['Agent_Name'].unique())
+
+agent_data = weekly_df[weekly_df['Agent_Name']==agent].sort_values('Week')
+latest = agent_data.iloc[-1]
+
+# -------------------------------
 # 📈 WEEKLY DSAT TREND
 # -------------------------------
 st.subheader("📈 Weekly DSAT Trend")
 st.line_chart(agent_data.set_index('Week')['DSAT_Count'])
 
 # -------------------------------
-# 🎯 CASE HANDLING + PREDICTION
+# 🎯 PREDICTION
 # -------------------------------
+prediction = model.predict([latest[features]])[0]
+risk = (prediction - y.mean())/y.std()*10 + 50
+
 st.subheader("🎯 Case Handling & Prediction")
 
 col4, col5 = st.columns(2)
@@ -156,46 +159,56 @@ st.dataframe(issue_df)
 st.bar_chart(issue_df.set_index("Issue")["Count"])
 
 # -------------------------------
-# 🤖 AI INSIGHT + ROOT CAUSE + ACTIONS
+# 🤖 AI INSIGHT (FINAL)
 # -------------------------------
-top_issue = issue_df.sort_values("Count", ascending=False).iloc[0]["Issue"]
-
 st.subheader("🤖 AI Insight")
 
+top_issue = issue_df.sort_values("Count", ascending=False).iloc[0]["Issue"]
+
 if risk < 45:
+
     st.markdown(f"""
-### ✅ Strong Performance
+### ✅ Performance Summary
 
-Agent **{agent}** is performing well with low DSAT risk.
+Agent **{agent}** is performing strongly with low DSAT risk.
 
+- Predicted DSAT: **{int(prediction)}**
+- Risk Score: **{int(risk)}**
+
+The agent is consistently delivering a stable and positive customer experience.
+""")
+
+    st.markdown("""
 ### 💡 Strengths
-- Consistent delivery
-- Good customer handling
+- Consistent handling quality  
+- Low dissatisfaction trend  
+- Good customer engagement  
 
-👉 Maintain current performance.
+👉 Continue current approach to maintain performance.
 """)
 
 else:
 
     if top_issue == "Communication":
-        root = "Customer dissatisfaction is driven by communication issues."
-        action = """
-- Improve empathy and tone  
-- Avoid scripted responses  
-- Listen actively  
+        root = "Customer dissatisfaction is primarily driven by communication gaps during interactions."
+        actions = """
+- Improve empathy and tone in conversations  
+- Avoid scripted or robotic responses  
+- Focus on active listening and clarity  
 """
     elif top_issue == "Process":
-        root = "Delays and inefficient handling are driving DSAT."
-        action = """
-- Reduce wait time  
-- Avoid multiple transfers  
-- Take ownership  
+        root = "Customer dissatisfaction is driven by delays and inefficient handling processes."
+        actions = """
+- Reduce wait time and unnecessary transfers  
+- Provide clear timelines to customers  
+- Take full ownership of issues  
 """
     else:
-        root = "Product-related issues are impacting resolution quality."
-        action = """
-- Improve product knowledge  
-- Escalate faster  
+        root = "Customer dissatisfaction is driven by product-related issues and resolution gaps."
+        actions = """
+- Strengthen product knowledge  
+- Escalate recurring issues faster  
+- Ensure accurate and complete resolutions  
 """
 
     st.markdown(f"""
@@ -204,13 +217,15 @@ else:
 - Predicted DSAT: **{int(prediction)}**
 - Risk Score: **{int(risk)}**
 
----
+The agent is currently experiencing an increase in customer dissatisfaction signals.
+""")
 
+    st.markdown(f"""
 ### 🔍 Root Cause
 {root}
+""")
 
----
-
+    st.markdown(f"""
 ### 💡 Actions
-{action}
+{actions}
 """)
