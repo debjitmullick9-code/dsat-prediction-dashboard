@@ -11,6 +11,12 @@ from sklearn.model_selection import train_test_split
 from sklearn.metrics import accuracy_score, mean_absolute_error, r2_score
 
 from textblob import TextBlob
+from openai import OpenAI
+
+# -------------------------------
+# OPENAI CLIENT
+# -------------------------------
+client = OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
 
 # -------------------------------
 # PAGE CONFIG
@@ -19,7 +25,7 @@ st.set_page_config(page_title="DSAT Intelligence", layout="wide")
 st.title("🚀 DSAT Intelligence Dashboard")
 
 # -------------------------------
-# SAFE CSV LOADER (FINAL FIX)
+# SAFE CSV LOADER
 # -------------------------------
 file_path = "bpo_customer_experience_dataset.csv"
 
@@ -32,9 +38,9 @@ df = None
 for encoding in ["utf-8", "latin1", "utf-16"]:
     for sep in [",", "|", ";", "\t"]:
         try:
-            temp_df = pd.read_csv(file_path, encoding=encoding, sep=sep)
-            if temp_df.shape[1] > 1:
-                df = temp_df
+            temp = pd.read_csv(file_path, encoding=encoding, sep=sep)
+            if temp.shape[1] > 1:
+                df = temp
                 break
         except:
             continue
@@ -42,11 +48,10 @@ for encoding in ["utf-8", "latin1", "utf-16"]:
         break
 
 if df is None or df.empty:
-    st.error("❌ Unable to read CSV properly. Fix file format.")
+    st.error("❌ Failed to load dataset")
     st.stop()
 
 df.columns = df.columns.str.strip()
-
 st.success(f"✅ Loaded {df.shape[0]} rows")
 
 # -------------------------------
@@ -76,24 +81,19 @@ def label_issue(comment):
 df['Issue_Label'] = df['Customer_Comment'].apply(label_issue)
 
 # -------------------------------
-# NLP MODEL (FIXED REALISTIC)
+# NLP MODEL (REALISTIC)
 # -------------------------------
 df_clean = df[df['Issue_Label'] != "Other"].copy()
 
 if len(df_clean) > 50:
 
-    # 🔥 ADD LABEL NOISE (BREAK PERFECT PATTERN)
+    # Add noise
     noise_ratio = 0.2
     noise_idx = np.random.choice(df_clean.index, int(len(df_clean)*noise_ratio), replace=False)
-
-    random_labels = np.random.choice(
-        ["Communication", "Process", "Product"],
-        size=len(noise_idx)
+    df_clean.loc[noise_idx, 'Issue_Label'] = np.random.choice(
+        ["Communication","Process","Product"], len(noise_idx)
     )
 
-    df_clean.loc[noise_idx, 'Issue_Label'] = random_labels
-
-    # Proper split
     train_df, test_df = train_test_split(
         df_clean,
         test_size=0.3,
@@ -101,10 +101,7 @@ if len(df_clean) > 50:
         random_state=42
     )
 
-    vectorizer = TfidfVectorizer(
-        stop_words='english',
-        max_features=2000
-    )
+    vectorizer = TfidfVectorizer(stop_words='english', max_features=2000)
 
     X_train = vectorizer.fit_transform(train_df['Customer_Comment'])
     y_train = train_df['Issue_Label']
@@ -151,16 +148,14 @@ mae = mean_absolute_error(y,preds)
 r2 = r2_score(y,preds)
 
 # -------------------------------
-# ACCURACY DISPLAY
+# METRICS
 # -------------------------------
 st.subheader("📊 System Accuracy Overview")
 
-c1, c2, c3 = st.columns(3)
+c1,c2,c3 = st.columns(3)
 c1.metric("Issue Detection Accuracy", f"{round(nlp_accuracy*100,1)}%")
 c2.metric("Prediction Reliability (R²)", round(r2,2))
 c3.metric("Avg Prediction Error", round(mae,2))
-
-st.caption("Noise added to prevent overfitting on synthetic data")
 
 # -------------------------------
 # ALERT SYSTEM
@@ -192,27 +187,60 @@ st.metric("Risk Score", int(risk))
 st.line_chart(agent_data.set_index('Week')['DSAT_Count'])
 
 # -------------------------------
-# AI INSIGHT (SINGLE)
+# ISSUE BREAKDOWN (FIXED)
 # -------------------------------
-def generate_insight(agent, pred, risk):
+agent_comments = df[df['Agent_Name']==agent]
+dsat_comments = agent_comments[agent_comments['DSAT']==1]['Customer_Comment']
 
-    if risk < 45:
-        level = "Good"
-    elif risk < 60:
-        level = "Moderate"
-    else:
-        level = "High Risk"
+issues = ["Communication","Process","Product"]
 
-    return f"""
-### 🤖 AI Insight
+if len(dsat_comments) > 0:
+    X_test_agent = vectorizer.transform(dsat_comments)
+    pred_issues = issue_model.predict(X_test_agent)
 
-Agent **{agent}** is at **{level} performance**.
+    issue_df = pd.DataFrame(pred_issues, columns=["Issue"])
+    issue_df = issue_df.value_counts().reset_index(name="Count")
 
-- Predicted DSAT: **{int(pred)}**
-- Risk Score: **{int(risk)}**
+    for i in issues:
+        if i not in issue_df["Issue"].values:
+            issue_df = pd.concat([issue_df, pd.DataFrame({"Issue":[i],"Count":[0]})])
 
-Focus on improving communication, reducing wait time, and improving resolution quality.
-"""
+else:
+    issue_df = pd.DataFrame({"Issue": issues, "Count": [0,0,0]})
+
+st.subheader("📊 Issue Breakdown")
+st.dataframe(issue_df)
+st.bar_chart(issue_df.set_index("Issue")["Count"])
+
+# -------------------------------
+# 🤖 GPT AI INSIGHT
+# -------------------------------
+def generate_ai_insight(agent, pred, risk, issue_df):
+
+    issue_summary = ", ".join(
+        [f"{row['Issue']} ({row['Count']})" for _, row in issue_df.iterrows()]
+    )
+
+    prompt = f"""
+    Agent: {agent}
+    Predicted DSAT: {int(pred)}
+    Risk Score: {int(risk)}
+    Issues: {issue_summary}
+
+    Give professional performance summary and improvement suggestions.
+    """
+
+    try:
+        response = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[{"role":"user","content":prompt}]
+        )
+        return response.choices[0].message.content
+
+    except Exception as e:
+        return f"AI Insight unavailable: {str(e)}"
 
 st.subheader("🤖 AI Insight")
-st.markdown(generate_insight(agent, prediction, risk))
+
+ai_output = generate_ai_insight(agent, prediction, risk, issue_df)
+st.markdown(ai_output)
