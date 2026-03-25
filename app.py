@@ -68,7 +68,7 @@ def label_issue(comment):
 df['Issue_Label'] = df['Customer_Comment'].apply(label_issue)
 
 # -------------------------------
-# NLP MODEL
+# NLP MODEL (WITH ACCURACY)
 # -------------------------------
 df_clean = df[df['Issue_Label'] != "Other"].copy()
 
@@ -77,9 +77,15 @@ issue_model = None
 nlp_accuracy = 0
 
 if len(df_clean) > 50:
-    train_df, test_df = train_test_split(df_clean, test_size=0.3, stratify=df_clean['Issue_Label'])
+    train_df, test_df = train_test_split(
+        df_clean,
+        test_size=0.3,
+        stratify=df_clean['Issue_Label'],
+        random_state=42
+    )
 
     vectorizer = TfidfVectorizer(stop_words='english', max_features=2000)
+
     X_train = vectorizer.fit_transform(train_df['Customer_Comment'])
     y_train = train_df['Issue_Label']
 
@@ -128,20 +134,24 @@ prediction = model.predict([latest[features]])[0]
 risk = (prediction - y.mean())/y.std()*10 + 50
 
 # -------------------------------
-# METRICS
+# METRICS (FIXED)
 # -------------------------------
 agent_actual = agent_data['DSAT_Count']
 agent_pred = model.predict(agent_data[features])
 
 mae = mean_absolute_error(agent_actual, agent_pred)
 
-st.subheader("📊 Performance Metrics")
-st.metric("Predicted DSAT", int(prediction))
+st.subheader("📊 System Performance")
+
+c1, c2, c3 = st.columns(3)
+c1.metric("Issue Detection Accuracy", f"{round(nlp_accuracy*100,1)}%")
+c2.metric("Predicted DSAT", int(prediction))
+c3.metric("Avg Prediction Error", round(mae,2))
+
 st.metric("Risk Score", int(risk))
-st.metric("Avg Prediction Error", round(mae,2))
 
 # -------------------------------
-# 🚨 RISK SEGMENT (RESTORED)
+# RISK SEGMENT
 # -------------------------------
 st.subheader("🚨 Risk Segmentation")
 
@@ -186,7 +196,7 @@ st.subheader("📊 Issue Breakdown")
 st.dataframe(issue_df)
 
 # -------------------------------
-# 🔥 FINAL AI INSIGHT (LOGIC FIXED)
+# AI INSIGHT (FINAL CLEAN LOGIC)
 # -------------------------------
 def generate_ai_insight(agent, pred, risk, issue_df, trend):
 
@@ -202,27 +212,23 @@ def generate_ai_insight(agent, pred, risk, issue_df, trend):
 - Predicted DSAT: {int(pred)}
 - Risk Score: {int(risk)}
 
-✅ The agent is consistently delivering a good customer experience.
+✅ Consistently delivering good customer experience.
 
 ### 💡 Strengths
-- Low DSAT trend
 - Stable performance
-- Good handling across key areas
+- Low DSAT trend
 
-👉 Continue current approach and maintain consistency.
+👉 Maintain current approach.
 """
 
-    # -------------------------------
-    # LOW PERFORMANCE LOGIC
-    # -------------------------------
     if top_issue == "Communication":
         problem = "Customer dissatisfaction is driven by communication gaps."
         coaching = "- Improve empathy\n- Avoid scripted responses\n- Listen actively"
     elif top_issue == "Process":
-        problem = "Customer dissatisfaction is driven by delays and inefficient handling."
+        problem = "Customer dissatisfaction is driven by delays and inefficiency."
         coaching = "- Reduce wait time\n- Avoid transfers\n- Take ownership"
     else:
-        problem = "Customer dissatisfaction is driven by product-related issues."
+        problem = "Customer dissatisfaction is driven by product issues."
         coaching = "- Improve product knowledge\n- Escalate issues faster"
 
     trend_msg = "DSAT is rising, indicating declining performance." if trend > 0 else "Performance needs monitoring."
@@ -241,7 +247,7 @@ def generate_ai_insight(agent, pred, risk, issue_df, trend):
 ### 🔍 Root Cause
 {problem}
 
-### 💡 Recommended Actions
+### 💡 Actions
 {coaching}
 """
 
