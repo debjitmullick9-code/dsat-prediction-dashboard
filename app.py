@@ -1,7 +1,6 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-import random
 
 from sklearn.ensemble import RandomForestRegressor
 from sklearn.linear_model import LogisticRegression
@@ -26,7 +25,7 @@ df['DSAT'] = df['Customer_Effortless'].apply(lambda x: 1 if x == "No" else 0)
 df['Sentiment'] = df['Customer_Comment'].apply(lambda x: TextBlob(str(x)).sentiment.polarity)
 
 # -------------------------------
-# LABEL FUNCTION (BALANCED)
+# LABEL FUNCTION
 # -------------------------------
 def label_issue(comment):
     c = str(comment).lower()
@@ -41,43 +40,51 @@ def label_issue(comment):
         return "Other"
 
 # -------------------------------
-# NLP MODEL (REALISTIC FIX)
+# NLP MODEL (FINAL FIX)
 # -------------------------------
 df['Issue_Label'] = df['Customer_Comment'].apply(label_issue)
-
 df_clean = df[df['Issue_Label'] != "Other"].copy()
 
-# Sample split (avoid leakage)
+# 🔥 REMOVE KEYWORDS (CRITICAL FIX)
+def clean_text(text):
+    text = str(text).lower()
+
+    keywords = [
+        "rude","unhelpful","confusing","agent",
+        "delay","wait","slow","time","long",
+        "not working","bug","error","issue","failed"
+    ]
+
+    for word in keywords:
+        text = text.replace(word, "")
+
+    return text
+
+df_clean['Clean_Comment'] = df_clean['Customer_Comment'].apply(clean_text)
+
+# Split
 train_sample = df_clean.sample(frac=0.6, random_state=42)
 test_sample = df_clean.drop(train_sample.index)
 
-# Add slight noise to avoid overfitting
-def add_noise(text):
-    if random.random() < 0.15:
-        return "unclear issue"
-    return text
-
-train_sample['Customer_Comment'] = train_sample['Customer_Comment'].apply(add_noise)
-
-# Vectorization
+# Vectorize
 vectorizer = TfidfVectorizer(
     stop_words='english',
     ngram_range=(1,2),
     max_features=3000
 )
 
-X_train = vectorizer.fit_transform(train_sample['Customer_Comment'])
+X_train = vectorizer.fit_transform(train_sample['Clean_Comment'])
 y_train = train_sample['Issue_Label']
 
-X_test = vectorizer.transform(test_sample['Customer_Comment'])
+X_test = vectorizer.transform(test_sample['Clean_Comment'])
 y_test = test_sample['Issue_Label']
 
 # Safety check
 if len(set(y_train)) < 2:
-    st.error("Not enough class diversity for NLP model")
+    st.error("Not enough class diversity")
     st.stop()
 
-# Model
+# Train model
 issue_model = LogisticRegression(max_iter=200)
 issue_model.fit(X_train, y_train)
 
@@ -124,7 +131,7 @@ col1.metric("Issue Detection Accuracy", f"{round(nlp_accuracy*100,1)}%")
 col2.metric("Prediction Reliability (R²)", round(r2,2))
 col3.metric("Avg Prediction Error", round(mae,2))
 
-st.caption("Accuracy is based on sampled data and may vary with real-world datasets")
+st.caption("Accuracy is based on cleaned data and reflects real model performance")
 
 # -------------------------------
 # ALERT SYSTEM
@@ -148,7 +155,7 @@ with colB:
     st.dataframe(moderate.sort_values("Risk", ascending=False).head(5))
 
 # -------------------------------
-# LOW RISK AGENTS
+# LOW RISK
 # -------------------------------
 st.subheader("🟢 Low Risk Agents")
 low_risk = agent_summary.sort_values("Risk").head(10)
@@ -165,9 +172,7 @@ latest = agent_data.iloc[-1]
 prediction = model.predict([latest[features]])[0]
 risk = (prediction - y.mean())/y.std()*10 + 50
 
-# -------------------------------
-# AGENT ALERT
-# -------------------------------
+# Alerts
 if risk > 60:
     st.error("🚨 High Risk – Immediate Action Needed")
 elif risk > 45:
@@ -175,15 +180,11 @@ elif risk > 45:
 else:
     st.success("✅ Stable Performance")
 
-# -------------------------------
 # KPI
-# -------------------------------
 st.metric("Predicted DSAT", int(prediction))
 st.metric("Risk Score", int(risk))
 
-# -------------------------------
-# TREND
-# -------------------------------
+# Trend
 trend = latest['DSAT_lag_1'] - latest['DSAT_lag_4']
 
 if trend > 0:
@@ -202,7 +203,8 @@ agent_comments = df[df['Agent_Name']==agent]
 dsat_comments = agent_comments[agent_comments['DSAT']==1]['Customer_Comment']
 
 if len(dsat_comments) > 0:
-    X_test_agent = vectorizer.transform(dsat_comments)
+    clean_comments = [clean_text(c) for c in dsat_comments]
+    X_test_agent = vectorizer.transform(clean_comments)
     predicted_issues = issue_model.predict(X_test_agent)
 
     issue_df = pd.DataFrame(predicted_issues, columns=["Issue"])
@@ -214,7 +216,7 @@ st.subheader("📊 Issue Breakdown")
 st.dataframe(issue_df)
 
 # -------------------------------
-# AI INSIGHT (FINAL)
+# AI INSIGHT
 # -------------------------------
 def generate_insight(agent, pred, risk, sentiment, issue_df, trend):
 
@@ -227,15 +229,8 @@ def generate_insight(agent, pred, risk, sentiment, issue_df, trend):
     else:
         level = "high risk"
 
-    if trend > 0:
-        trend_msg = "increasing"
-    elif trend < 0:
-        trend_msg = "improving"
-    else:
-        trend_msg = "stable"
-
     if top_issue == "Communication":
-        action = "Improve clarity, empathy, and avoid scripted responses."
+        action = "Improve clarity and empathy during conversations."
     elif top_issue == "Process":
         action = "Reduce wait time and improve resolution speed."
     elif top_issue == "Product":
@@ -250,10 +245,8 @@ Agent **{agent}** performance is **{level}**.
 
 - Predicted DSAT: **{int(pred)}**
 - Risk Score: **{int(risk)}**
-- Trend: **{trend_msg}**
-- Sentiment: {"positive" if sentiment > 0 else "negative"}
 
-### 🔍 Key Opportunity:
+### 🔍 Key Issue:
 **{top_issue}**
 
 ### 💡 Recommendation:
@@ -263,5 +256,4 @@ Agent **{agent}** performance is **{level}**.
 sentiment = agent_comments['Sentiment'].mean()
 
 st.subheader("🤖 AI Insight")
-
 st.markdown(generate_insight(agent,prediction,risk,sentiment,issue_df,trend))
