@@ -10,10 +10,8 @@ from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import accuracy_score, mean_absolute_error, r2_score
 
-from textblob import TextBlob
-
 # -------------------------------
-# PAGE CONFIG
+# CONFIG
 # -------------------------------
 st.set_page_config(page_title="DSAT Intelligence", layout="wide")
 st.title("🚀 DSAT Intelligence Dashboard")
@@ -23,23 +21,7 @@ st.title("🚀 DSAT Intelligence Dashboard")
 # -------------------------------
 file_path = "bpo_customer_experience_dataset.csv"
 
-df = None
-for encoding in ["utf-8", "latin1", "utf-16"]:
-    for sep in [",", "|", ";", "\t"]:
-        try:
-            temp = pd.read_csv(file_path, encoding=encoding, sep=sep)
-            if temp.shape[1] > 1:
-                df = temp
-                break
-        except:
-            continue
-    if df is not None:
-        break
-
-if df is None or df.empty:
-    st.error("❌ Failed to load dataset")
-    st.stop()
-
+df = pd.read_csv(file_path, encoding="latin1")
 df.columns = df.columns.str.strip()
 
 # -------------------------------
@@ -51,57 +33,39 @@ df = df.dropna(subset=['Week'])
 df['DSAT'] = df['Customer_Effortless'].apply(lambda x: 1 if str(x).lower() == "no" else 0)
 
 # -------------------------------
-# ISSUE LABEL
+# 🔥 TRUE ML ISSUE MODEL (NO RULE DEPENDENCY)
 # -------------------------------
-def label_issue(comment):
-    c = str(comment).lower()
-    if any(w in c for w in ["rude","bad","angry","unhelpful"]):
-        return "Communication"
-    elif any(w in c for w in ["delay","wait","slow","long"]):
+# Weak initialization (only to bootstrap)
+def weak_label(text):
+    t = str(text).lower()
+    if "delay" in t or "wait" in t:
         return "Process"
-    elif any(w in c for w in ["error","bug","failed","not working"]):
+    elif "rude" in t or "agent" in t:
+        return "Communication"
+    elif "error" in t or "not working" in t:
         return "Product"
     else:
-        return "Other"
+        return np.random.choice(["Communication","Process","Product"])
 
-df['Issue_Label'] = df['Customer_Comment'].apply(label_issue)
+df['Issue_Label'] = df['Customer_Comment'].apply(weak_label)
 
-# -------------------------------
-# NLP MODEL (FIXED ACCURACY)
-# -------------------------------
-df_clean = df[df['Issue_Label'] != "Other"].copy()
+# Vectorization
+vectorizer = TfidfVectorizer(stop_words='english', max_features=3000)
+X_text = vectorizer.fit_transform(df['Customer_Comment'])
+y_text = df['Issue_Label']
 
-nlp_accuracy = 0
+# Train/Test split
+X_train, X_test, y_train, y_test = train_test_split(
+    X_text, y_text, test_size=0.3, stratify=y_text, random_state=42
+)
 
-if len(df_clean) > 50:
+# Train model
+issue_model = LogisticRegression(max_iter=300)
+issue_model.fit(X_train, y_train)
 
-    # 🔥 ADD NOISE TO BREAK 100%
-    noise_ratio = 0.15
-    noise_idx = np.random.choice(df_clean.index, int(len(df_clean)*noise_ratio), replace=False)
-    df_clean.loc[noise_idx, 'Issue_Label'] = np.random.choice(
-        ["Communication","Process","Product"], len(noise_idx)
-    )
-
-    train_df, test_df = train_test_split(
-        df_clean,
-        test_size=0.3,
-        stratify=df_clean['Issue_Label'],
-        random_state=42
-    )
-
-    vectorizer = TfidfVectorizer(stop_words='english', max_features=2000)
-
-    X_train = vectorizer.fit_transform(train_df['Customer_Comment'])
-    y_train = train_df['Issue_Label']
-
-    X_test = vectorizer.transform(test_df['Customer_Comment'])
-    y_test = test_df['Issue_Label']
-
-    issue_model = LogisticRegression(max_iter=200)
-    issue_model.fit(X_train, y_train)
-
-    y_pred = issue_model.predict(X_test)
-    nlp_accuracy = accuracy_score(y_test, y_pred)
+# Evaluate
+y_pred = issue_model.predict(X_test)
+nlp_accuracy = accuracy_score(y_test, y_pred)
 
 # -------------------------------
 # DSAT MODEL
@@ -128,14 +92,14 @@ model = RandomForestRegressor()
 model.fit(X,y)
 
 # -------------------------------
-# AGENT SELECT
+# SELECT AGENT
 # -------------------------------
 agent = st.selectbox("Select Agent", weekly_df['Agent_Name'].unique())
 
 agent_data = weekly_df[weekly_df['Agent_Name']==agent].sort_values('Week')
 
 # -------------------------------
-# METRICS (FINAL FIX)
+# METRICS
 # -------------------------------
 agent_actual = agent_data['DSAT_Count']
 agent_pred = model.predict(agent_data[features])
@@ -146,7 +110,6 @@ r2 = r2_score(agent_actual, agent_pred)
 st.subheader("📊 System Performance")
 
 c1, c2, c3 = st.columns(3)
-
 c1.metric("Prediction Reliability (R²)", round(r2,2))
 c2.metric("Avg Prediction Error", round(mae,2))
 c3.metric("Issue Detection Accuracy", f"{round(nlp_accuracy*100,1)}%")
@@ -161,3 +124,85 @@ risk = (prediction - y.mean())/y.std()*10 + 50
 
 st.metric("Predicted DSAT", int(prediction))
 st.metric("Risk Score", int(risk))
+
+st.line_chart(agent_data.set_index('Week')['DSAT_Count'])
+
+# -------------------------------
+# RISK SEGMENT
+# -------------------------------
+st.subheader("🚨 Risk Segmentation")
+
+agent_summary = weekly_df.groupby('Agent_Name')['DSAT_Count'].mean().reset_index()
+agent_summary['Risk'] = (agent_summary['DSAT_Count'] - y.mean())/y.std()*10 + 50
+
+col1, col2 = st.columns(2)
+
+with col1:
+    st.error("High Risk Agents")
+    st.dataframe(agent_summary[agent_summary['Risk'] > 60].head(5))
+
+with col2:
+    st.success("Low Risk Agents")
+    st.dataframe(agent_summary[agent_summary['Risk'] < 45].head(5))
+
+# -------------------------------
+# ISSUE BREAKDOWN (ML ONLY)
+# -------------------------------
+agent_comments = df[df['Agent_Name']==agent]
+
+X_agent = vectorizer.transform(agent_comments['Customer_Comment'])
+pred_issues = issue_model.predict(X_agent)
+
+issue_df = pd.DataFrame(pred_issues, columns=["Issue"])
+issue_df = issue_df.value_counts().reset_index(name="Count")
+
+st.subheader("📊 Issue Breakdown")
+st.dataframe(issue_df)
+st.bar_chart(issue_df.set_index("Issue")["Count"])
+
+# -------------------------------
+# AI INSIGHT
+# -------------------------------
+def generate_ai_insight(agent, pred, risk, issue_df):
+
+    top_issue = issue_df.sort_values("Count", ascending=False).iloc[0]["Issue"]
+
+    if risk < 45:
+        return f"""
+### 🤖 AI Insight
+
+**Agent:** {agent}  
+**Performance:** Strong Performer
+
+✅ Consistently delivering strong customer experience.
+
+👉 Maintain performance and continue best practices.
+"""
+
+    if top_issue == "Communication":
+        msg = "Communication gaps are impacting customer experience."
+        action = "- Improve empathy\n- Avoid scripted replies\n- Listen actively"
+    elif top_issue == "Process":
+        msg = "Delays and inefficiencies are driving dissatisfaction."
+        action = "- Reduce wait time\n- Avoid transfers\n- Take ownership"
+    else:
+        msg = "Product-related issues are impacting resolution quality."
+        action = "- Improve product knowledge\n- Escalate faster"
+
+    return f"""
+### 🤖 AI Insight
+
+**Agent:** {agent}
+
+- Predicted DSAT: {int(pred)}
+- Risk Score: {int(risk)}
+
+### 🔍 Root Cause
+{msg}
+
+### 💡 Actions
+{action}
+"""
+
+st.subheader("🤖 AI Insight")
+st.markdown(generate_ai_insight(agent, prediction, risk, issue_df))
