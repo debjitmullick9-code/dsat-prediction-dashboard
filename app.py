@@ -8,7 +8,7 @@ from sklearn.linear_model import LogisticRegression
 from sklearn.feature_extraction.text import TfidfVectorizer
 
 from sklearn.model_selection import train_test_split
-from sklearn.metrics import accuracy_score, mean_absolute_error, r2_score
+from sklearn.metrics import accuracy_score, mean_absolute_error
 
 from textblob import TextBlob
 
@@ -136,7 +136,7 @@ model = RandomForestRegressor()
 model.fit(X,y)
 
 # -------------------------------
-# SELECT AGENT FIRST (IMPORTANT CHANGE)
+# SELECT AGENT
 # -------------------------------
 agent = st.selectbox("Select Agent", weekly_df['Agent_Name'].unique())
 
@@ -147,7 +147,7 @@ prediction = model.predict([latest[features]])[0]
 risk = (prediction - y.mean())/y.std()*10 + 50
 
 # -------------------------------
-# AGENT-SPECIFIC METRICS (FIXED)
+# AGENT METRICS (FIXED)
 # -------------------------------
 agent_actual = agent_data['DSAT_Count'].values
 agent_pred = model.predict(agent_data[features])
@@ -157,10 +157,7 @@ agent_mae = mean_absolute_error(agent_actual, agent_pred)
 agent_variance = np.var(agent_actual)
 agent_error_var = np.var(agent_actual - agent_pred)
 
-if agent_variance != 0:
-    agent_r2 = 1 - (agent_error_var / agent_variance)
-else:
-    agent_r2 = 0
+agent_r2 = 1 - (agent_error_var / agent_variance) if agent_variance != 0 else 0
 
 st.subheader("📊 System Accuracy Overview")
 
@@ -168,19 +165,6 @@ c1,c2,c3 = st.columns(3)
 c1.metric("Issue Detection Accuracy", f"{round(nlp_accuracy*100,1)}%")
 c2.metric("Prediction Reliability", round(agent_r2,2))
 c3.metric("Avg Prediction Error", round(agent_mae,2))
-
-# -------------------------------
-# ALERT SYSTEM
-# -------------------------------
-st.subheader("🚨 Alerts & Risk Monitoring")
-
-agent_summary = weekly_df.groupby('Agent_Name')['DSAT_Count'].mean().reset_index()
-agent_summary['Risk'] = (agent_summary['DSAT_Count'] - y.mean())/y.std()*10 + 50
-
-st.dataframe(agent_summary.sort_values("Risk", ascending=False).head(10))
-
-st.subheader("🟢 Low Risk Agents")
-st.dataframe(agent_summary.sort_values("Risk").head(10))
 
 # -------------------------------
 # KPI
@@ -208,7 +192,6 @@ if len(dsat_comments) > 0:
     for i in issues:
         if i not in issue_df["Issue"].values:
             issue_df = pd.concat([issue_df, pd.DataFrame({"Issue":[i],"Count":[0]})])
-
 else:
     issue_df = pd.DataFrame({"Issue": issues, "Count": [0,0,0]})
 
@@ -219,10 +202,9 @@ st.bar_chart(issue_df.set_index("Issue")["Count"])
 # -------------------------------
 # 🔥 FINAL AI INSIGHT (FIXED)
 # -------------------------------
-def generate_ai_insight(agent, pred, risk, issue_df, sentiment, trend):
+def generate_ai_insight(agent, pred, risk, issue_df, trend, dsat_ratio):
 
     top_issue = issue_df.sort_values("Count", ascending=False).iloc[0]["Issue"]
-    total_issues = issue_df["Count"].sum()
 
     if risk < 45:
         level = "Strong Performer"
@@ -231,15 +213,7 @@ def generate_ai_insight(agent, pred, risk, issue_df, sentiment, trend):
     else:
         level = "Critical"
 
-    # FIXED SENTIMENT ALIGNMENT
-    if trend > 0:
-        sentiment_msg = "Customer sentiment is turning negative as dissatisfaction increases."
-    elif trend < 0:
-        sentiment_msg = "Customer sentiment is improving along with performance recovery."
-    else:
-        sentiment_msg = "Customer sentiment is stable."
-
-    # TREND MESSAGE
+    # TREND
     if trend > 0:
         trend_msg = "DSAT is rising week-over-week, indicating performance decline."
     elif trend < 0:
@@ -247,52 +221,51 @@ def generate_ai_insight(agent, pred, risk, issue_df, sentiment, trend):
     else:
         trend_msg = "DSAT is stable."
 
-    # DYNAMIC COACHING
-    if trend > 0:
-        if top_issue == "Communication":
-            coaching = "- Improve empathy and avoid scripted responses\n- Focus on listening skills"
-            impact = "Communication issues are driving dissatisfaction."
-        elif top_issue == "Process":
-            coaching = "- Reduce wait time\n- Avoid multiple transfers\n- Take ownership"
-            impact = "Process delays are increasing DSAT."
-        else:
-            coaching = "- Improve product knowledge\n- Escalate recurring issues"
-            impact = "Product gaps are impacting resolution."
-    elif trend < 0:
-        coaching = "- Maintain current performance\n- Continue best practices"
-        impact = "Performance improvements are visible."
+    # 🔥 FIXED SENTIMENT
+    if trend > 0 or dsat_ratio > 0.3:
+        sentiment_msg = "Customer sentiment is negative due to increasing dissatisfaction."
+    elif trend < 0 and dsat_ratio < 0.2:
+        sentiment_msg = "Customer sentiment is improving with better experience."
     else:
-        coaching = "- Maintain consistency and monitor trends"
-        impact = "No major issue detected."
+        sentiment_msg = "Customer sentiment is mixed."
+
+    # COACHING
+    if trend > 0:
+        coaching = "- Immediate action needed\n- Focus on root cause"
+    elif trend < 0:
+        coaching = "- Maintain current performance\n- Continue good practices"
+    else:
+        coaching = "- Monitor performance"
 
     return f"""
-### 🤖 AI Performance Insight
+### 🤖 AI Insight
 
 **Agent:** {agent}  
-**Performance Level:** {level}
+**Performance:** {level}
 
----
+- Predicted DSAT: {int(pred)}
+- Risk Score: {int(risk)}
 
-### 📊 Summary
-- Predicted DSAT: **{int(pred)}**
-- Risk Score: **{int(risk)}**
-- {trend_msg}
-- {sentiment_msg}
+{trend_msg}  
+{sentiment_msg}
 
----
+### Key Issue: {top_issue}
 
-### 🔍 Key Driver
-**{top_issue} ({total_issues} cases)**  
-👉 {impact}
-
----
-
-### 💡 Coaching
+### Coaching:
 {coaching}
 """
 
+# -------------------------------
+# CALCULATIONS
+# -------------------------------
 trend = latest['DSAT_lag_1'] - latest['DSAT_lag_4']
-sentiment = agent_comments['Sentiment'].mean()
 
+total_tickets = len(agent_comments)
+total_dsat = agent_comments['DSAT'].sum()
+dsat_ratio = total_dsat / total_tickets if total_tickets > 0 else 0
+
+# -------------------------------
+# OUTPUT
+# -------------------------------
 st.subheader("🤖 AI Insight")
-st.markdown(generate_ai_insight(agent, prediction, risk, issue_df, sentiment, trend))
+st.markdown(generate_ai_insight(agent, prediction, risk, issue_df, trend, dsat_ratio))
